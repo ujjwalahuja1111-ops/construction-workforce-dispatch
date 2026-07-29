@@ -1,0 +1,284 @@
+// -----------------------------------------------------------------------------
+// Dispatch Platform - Prisma Schema
+// Dev DB: SQLite (file:./dev.db)
+// Prod: swap datasource `provider` to "postgresql" and update DATABASE_URL.
+// -----------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// USERS & ROLES
+// -----------------------------------------------------------------------------
+
+// A single account per phone; role decides which profile record is expected.
+model User {
+  id           String   @id @default(uuid())
+  phone        String   @unique
+  role         String   // "WORKER" | "CONTRACTOR" | "ADMIN"
+  fullName     String
+  isVerified   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  deletedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  worker       Worker?
+  contractor   Contractor?
+  otps         Otp[]
+  notifications Notification[]
+  ratingsGiven Rating[] @relation("RatingAuthor")
+
+  @@index([role])
+  @@index([phone])
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  userId    String
+  code      String
+  expiresAt DateTime
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// -----------------------------------------------------------------------------
+// WORKER PROFILE
+// -----------------------------------------------------------------------------
+
+model Worker {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  skills             String   // CSV of skill codes, e.g. "MASON,HELPER,BAR_BENDER"
+  experienceYears    Int      @default(0)
+  dailyWage          Int      @default(0)    // in INR
+  city               String
+  state              String
+  homeLatitude       Float?
+  homeLongitude      Float?
+  currentLatitude    Float?
+  currentLongitude   Float?
+  isAvailable        Boolean  @default(true)
+
+  // Trust metrics (denormalized for fast reads; recomputed by TrustEngine)
+  trustScore         Int      @default(70)   // clamped 0..100
+  totalShifts        Int      @default(0)
+  completedShifts   Int      @default(0)
+  cancelledShifts   Int      @default(0)
+  acceptedOffers    Int      @default(0)
+  declinedOffers    Int      @default(0)
+  avgRating         Float    @default(0)
+  totalEarnings     Int      @default(0)      // INR
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offers     JobOffer[]
+  shifts     Shift[]
+  ratings    Rating[]
+
+  @@index([city])
+  @@index([isAvailable])
+  @@index([trustScore])
+}
+
+// -----------------------------------------------------------------------------
+// CONTRACTOR PROFILE
+// -----------------------------------------------------------------------------
+
+model Contractor {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  companyName  String
+  city         String
+  state        String
+  gstNumber    String?
+  rating       Float    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projects Project[]
+
+  @@index([city])
+}
+
+// -----------------------------------------------------------------------------
+// PROJECT & JOB (LABOUR REQUEST)
+// -----------------------------------------------------------------------------
+
+model Project {
+  id            String   @id @default(uuid())
+  contractorId  String
+  name          String
+  siteAddress   String
+  city          String
+  state         String
+  latitude      Float
+  longitude     Float
+  startsOn      DateTime
+  endsOn        DateTime?
+  status        String   @default("ACTIVE") // ACTIVE | PAUSED | COMPLETED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  jobs       Job[]
+
+  @@index([contractorId])
+  @@index([city])
+}
+
+// A "Job" == labour request: N workers of a given skill needed on a given date.
+model Job {
+  id            String   @id @default(uuid())
+  projectId     String
+  skill         String                          // e.g. MASON, HELPER
+  headcount     Int                             // total workers required
+  dailyWage     Int                             // INR per day per worker
+  shiftDate     DateTime                        // the day workers are needed
+  startTime     String                          // "08:00" (24h HH:mm)
+  endTime       String                          // "18:00"
+  status        String   @default("OPEN")       // OPEN | DISPATCHING | FULFILLED | CANCELLED | CLOSED
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project  Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  offers   JobOffer[]
+  shifts   Shift[]
+
+  @@index([status])
+  @@index([shiftDate])
+  @@index([skill])
+}
+
+// A single dispatch offer to a specific worker for a specific job.
+model JobOffer {
+  id         String   @id @default(uuid())
+  jobId      String
+  workerId   String
+  status     String   @default("PENDING")  // PENDING | ACCEPTED | DECLINED | EXPIRED
+  score      Float                          // dispatch score used for ranking
+  distanceKm Float                          // computed via Haversine
+  expiresAt  DateTime
+  respondedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  job    Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, workerId])
+  @@index([workerId, status])
+  @@index([jobId, status])
+}
+
+// -----------------------------------------------------------------------------
+// SHIFT (State machine driven)
+// States: CREATED -> OFFERED -> ACCEPTED -> TRAVELLING -> ARRIVED -> CHECKED_IN
+//         -> WORKING -> BREAK -> RESUMED -> COMPLETED -> CHECKED_OUT -> CLOSED
+// -----------------------------------------------------------------------------
+
+model Shift {
+  id            String   @id @default(uuid())
+  jobId         String
+  workerId      String
+  state         String   @default("ACCEPTED")   // see states above
+  shiftDate     DateTime
+  scheduledStart String                          // "08:00"
+  scheduledEnd   String                          // "18:00"
+
+  checkInAt     DateTime?
+  checkInLat    Float?
+  checkInLng    Float?
+  checkOutAt    DateTime?
+  checkOutLat   Float?
+  checkOutLng   Float?
+
+  wageAmount    Int                              // captured at accept time (INR)
+  lateMinutes   Int      @default(0)
+  earlyExitMinutes Int   @default(0)
+  workedMinutes Int      @default(0)
+  amountEarned  Int      @default(0)             // INR (finalized on CLOSED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  job     Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  worker  Worker      @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  events  ShiftEvent[]
+  rating  Rating?
+
+  @@index([workerId, state])
+  @@index([jobId])
+  @@index([shiftDate])
+}
+
+model ShiftEvent {
+  id        String   @id @default(uuid())
+  shiftId   String
+  fromState String
+  toState   String
+  note      String?
+  latitude  Float?
+  longitude Float?
+  createdAt DateTime @default(now())
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([shiftId])
+}
+
+// -----------------------------------------------------------------------------
+// RATINGS
+// -----------------------------------------------------------------------------
+
+model Rating {
+  id        String   @id @default(uuid())
+  shiftId   String   @unique
+  workerId  String
+  authorId  String                    // contractor user id
+  score     Int                       // 1..5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  shift  Shift  @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  author User   @relation("RatingAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([workerId])
+}
+
+// -----------------------------------------------------------------------------
+// NOTIFICATIONS (in-app; no delivery provider in MVP)
+// -----------------------------------------------------------------------------
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String                    // JOB_OFFER | SHIFT_UPDATE | RATING | SYSTEM
+  title     String
+  body      String
+  data      String?                   // JSON string
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
