@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { AppError } from '../utils/errors';
 import { ShiftEngine } from '../engines/shift.engine';
@@ -60,7 +61,7 @@ export class ShiftService {
     const from = shift.state as ShiftStateT;
     ShiftEngine.assertTransition(from, to);
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const patch: Record<string, unknown> = { state: to };
 
       if (to === ShiftState.CHECKED_IN) {

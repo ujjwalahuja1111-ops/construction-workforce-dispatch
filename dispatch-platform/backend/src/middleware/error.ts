@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { AppError } from '../utils/errors';
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(
   err: unknown,
   _req: Request,
@@ -30,7 +29,6 @@ export function errorHandler(
   }
 
   const message = err instanceof Error ? err.message : 'Internal server error';
-  // eslint-disable-next-line no-console
   console.error('[unhandled]', err);
   return res.status(500).json({
     error: {

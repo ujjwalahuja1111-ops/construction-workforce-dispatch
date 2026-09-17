@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { AppError } from '../utils/errors';
 import { JobStatus, OfferStatus, ShiftState } from '../types/domain';
@@ -78,7 +79,7 @@ export class JobService {
       throw AppError.conflict('Job is already fully staffed');
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Auto-decline any other pending offers for this worker on same job (defense-in-depth)
       await tx.jobOffer.updateMany({
         where: {

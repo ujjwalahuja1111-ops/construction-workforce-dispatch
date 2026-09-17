@@ -1,7 +1,15 @@
+import { Prisma, Worker, User, JobOffer } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { env } from '../config/env';
 import { haversineKm } from '../utils/geo';
 import { OfferStatus, JobStatus } from '../types/domain';
+
+// The Worker rows this engine ranks always come from a query that
+// `include`s the owning User (see `dispatchJob` below) — kept as a
+// named type so every callback in the ranking pipeline stays explicit.
+type CandidateWorker = Worker & { user: User };
+type DispatchCandidate = { worker: CandidateWorker; distanceKm: number };
+type ScoredCandidate = DispatchCandidate & { score: number };
 
 /**
  * DispatchEngine
@@ -30,7 +38,7 @@ export class DispatchEngine {
       throw new Error(`Job ${jobId} not dispatchable (status=${job.status})`);
     }
 
-    const alreadyOffered = new Set(job.offers.map((o) => o.workerId));
+    const alreadyOffered = new Set(job.offers.map((o: JobOffer) => o.workerId));
     const remaining = job.headcount - job.shifts.length;
     if (remaining <= 0) return { offersCreated: 0, remaining: 0 };
 
@@ -45,7 +53,7 @@ export class DispatchEngine {
     });
 
     const ranked = workers
-      .map((w) => {
+      .map((w: CandidateWorker): DispatchCandidate => {
         const dist =
           w.currentLatitude != null && w.currentLongitude != null
             ? haversineKm(
@@ -65,8 +73,8 @@ export class DispatchEngine {
 
         return { worker: w, distanceKm: dist };
       })
-      .filter((c) => c.distanceKm <= env.dispatchMaxRadiusKm)
-      .map((c) => {
+      .filter((c: DispatchCandidate) => c.distanceKm <= env.dispatchMaxRadiusKm)
+      .map((c: DispatchCandidate): ScoredCandidate => {
         const trust = c.worker.trustScore / 100;
         const offersTotal = c.worker.acceptedOffers + c.worker.declinedOffers;
         const acceptance = offersTotal === 0 ? 0.5 : c.worker.acceptedOffers / offersTotal;
@@ -78,7 +86,7 @@ export class DispatchEngine {
 
         return { ...c, score };
       })
-      .sort((a, b) => b.score - a.score)
+      .sort((a: ScoredCandidate, b: ScoredCandidate) => b.score - a.score)
       .slice(0, Math.min(env.dispatchMaxCandidates, remaining * 3));
 
     if (ranked.length === 0) {
@@ -87,7 +95,7 @@ export class DispatchEngine {
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min TTL
 
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const rows = [];
       for (const c of ranked) {
         const offer = await tx.jobOffer.create({

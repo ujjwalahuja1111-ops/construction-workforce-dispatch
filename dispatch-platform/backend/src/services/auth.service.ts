@@ -58,7 +58,6 @@ export class AuthService {
       data: { userId: user.id, code, expiresAt },
     });
 
-    // eslint-disable-next-line no-console
     console.log(`[OTP] phone=${phone} code=${code} (dev-mode)`);
 
     return {

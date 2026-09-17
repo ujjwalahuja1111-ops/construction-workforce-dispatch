@@ -1,3 +1,4 @@
+import { Shift } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { AppError } from '../utils/errors';
 import { Role } from '../types/domain';
@@ -122,7 +123,7 @@ export class WorkerService {
       orderBy: { shiftDate: 'desc' },
     });
 
-    const total = shifts.reduce((sum, s) => sum + s.amountEarned, 0);
+    const total = shifts.reduce((sum: number, s: Shift) => sum + s.amountEarned, 0);
     const now = new Date();
     const weekStart = new Date(now);
     weekStart.setDate(now.getDate() - 7);
@@ -130,11 +131,11 @@ export class WorkerService {
     monthStart.setMonth(now.getMonth() - 1);
 
     const week = shifts
-      .filter((s) => s.shiftDate >= weekStart)
-      .reduce((sum, s) => sum + s.amountEarned, 0);
+      .filter((s: Shift) => s.shiftDate >= weekStart)
+      .reduce((sum: number, s: Shift) => sum + s.amountEarned, 0);
     const month = shifts
-      .filter((s) => s.shiftDate >= monthStart)
-      .reduce((sum, s) => sum + s.amountEarned, 0);
+      .filter((s: Shift) => s.shiftDate >= monthStart)
+      .reduce((sum: number, s: Shift) => sum + s.amountEarned, 0);
 
     return {
       total,
