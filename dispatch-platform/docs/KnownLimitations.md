@@ -82,10 +82,17 @@ external admin ever logs in.
 
 ## 3. Data model
 
-### 3.1 Skills stored as a CSV string
+### 3.1 Skills stored as a CSV string — first migration step landed in Patch 1
 `Worker.skills` is `"MASON,HELPER,WELDER"`. Filter by `skills.contains(x)`.
 Works because we have 10 skills. Migrate to a `WorkerSkill` join table
 when we exceed ~30 or we need per-skill certification metadata.
+
+Patch 1 / Milestone 0C added a real `Trade`/`Task`/`WorkerCapability`/
+`Assessment` graph (see `CapabilityModel.md`) that is exactly the kind of
+per-skill, leveled, evidenced model this note anticipated — but it runs
+**beside** `Worker.skills`, not instead of it. `Worker.skills` is still the
+only thing `DispatchEngine` reads; nothing migrates automatically between
+the two systems yet.
 
 ### 3.2 Denormalised counters on `Worker`
 `totalShifts`, `completedShifts`, `cancelledShifts`, `acceptedOffers`,

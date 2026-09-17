@@ -63,3 +63,43 @@ export const NotificationType = {
   RATING: 'RATING',
   SYSTEM: 'SYSTEM',
 } as const;
+
+/**
+ * Capability taxonomy (Patch 1 / Milestone 0C). Runs beside the legacy
+ * `Skill` flat-skill enum above, which remains authoritative for dispatch.
+ * See docs/CapabilityModel.md.
+ */
+
+// Level semantics were frozen in Patch 0C (Domain Contract) and are stored
+// as a plain Int on WorkerCapability — these are capability levels, not job
+// titles, and are never trade-specific.
+export const CapabilityLevel = {
+  L1: 1,
+  L2: 2,
+  L3: 3,
+  L4: 4,
+} as const;
+export type CapabilityLevelT = (typeof CapabilityLevel)[keyof typeof CapabilityLevel];
+
+export const CapabilityLevelDescription: Readonly<Record<number, string>> = {
+  1: 'Assist / Directed',
+  2: 'Independent, standard work',
+  3: 'Independent + basic troubleshooting',
+  4: 'Expert / complex & novel',
+};
+
+export const CapabilityProvenance = {
+  SELF_DECLARED: 'SELF_DECLARED',
+  ASSESSED: 'ASSESSED',
+  PRACTICALLY_VERIFIED: 'PRACTICALLY_VERIFIED',
+  PERFORMANCE_CONFIRMED: 'PERFORMANCE_CONFIRMED',
+} as const;
+export type CapabilityProvenanceT = (typeof CapabilityProvenance)[keyof typeof CapabilityProvenance];
+
+export const AssessmentType = {
+  SELF_DECLARATION: 'SELF_DECLARATION',
+  KNOWLEDGE_TEST: 'KNOWLEDGE_TEST',
+  PRACTICAL_VERIFICATION: 'PRACTICAL_VERIFICATION',
+  PERFORMANCE_REVIEW: 'PERFORMANCE_REVIEW',
+} as const;
+export type AssessmentTypeT = (typeof AssessmentType)[keyof typeof AssessmentType];

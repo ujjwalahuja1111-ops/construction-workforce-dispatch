@@ -43,7 +43,18 @@ Worker (1) ─── (*) Rating
 
 Shift  (1) ─── (*) ShiftEvent
 Shift  (1) ─── (0/1) Rating
+
+Trade  (1) ─── (*) Task
+Task   (1) ─── (*) WorkerCapability
+Worker (1) ─── (*) WorkerCapability
+WorkerCapability (1) ─── (*) Assessment
 ```
+
+The `Trade`/`Task`/`WorkerCapability`/`Assessment` graph (Patch 1 /
+Milestone 0C) is a new, additive capability model that runs beside the
+legacy `Worker.skills`/`Job.skill` flat-skill fields above — see
+`CapabilityModel.md` for the full spec. It is not read by `DispatchEngine`
+or any other existing service yet.
 
 ---
 
@@ -330,3 +341,9 @@ Volumes:
 
 Idempotent — running `seed.ts` again wipes all data first (`deleteMany` on
 every table in dependency order) and reinserts.
+
+The Patch 1 capability taxonomy (`Trade`/`Task`) is seeded separately by
+`prisma/seeds/taxonomy.ts`, called from `seed.ts` but idempotent via
+`upsert` on `code` rather than the delete-then-recreate pattern above — it
+is not wiped by re-running `seed.ts`, and can also be run standalone via
+`npm run seed:taxonomy`. See `CapabilityModel.md` §7.
