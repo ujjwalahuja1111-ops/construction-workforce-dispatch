@@ -28,9 +28,7 @@ export function buildApp() {
 if (require.main === module) {
   const app = buildApp();
   app.listen(env.port, '0.0.0.0', () => {
-    // eslint-disable-next-line no-console
     console.log(`[dispatch-backend] listening on http://0.0.0.0:${env.port}${env.apiPrefix}`);
-    // eslint-disable-next-line no-console
     console.log(`[dispatch-backend] dev OTP code = ${env.devOtpCode}`);
   });
 }

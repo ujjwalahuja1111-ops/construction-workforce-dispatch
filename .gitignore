@@ -86,3 +86,14 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# ...but keep the documented, secret-free example files.
+!.env.example
+
+# Local SQLite databases (Prisma dev DB and friends). Never commit real
+# working data — see dispatch-platform/backend/prisma/schema.prisma for how
+# to (re)create one locally via `npx prisma migrate dev` + the seed script.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3

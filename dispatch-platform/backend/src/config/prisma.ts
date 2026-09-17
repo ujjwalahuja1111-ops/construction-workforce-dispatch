@@ -5,7 +5,6 @@ import { PrismaClient } from '@prisma/client';
  * client on globalThis to avoid exhausting connections.
  */
 declare global {
-  // eslint-disable-next-line no-var
   var __prisma: PrismaClient | undefined;
 }
 
