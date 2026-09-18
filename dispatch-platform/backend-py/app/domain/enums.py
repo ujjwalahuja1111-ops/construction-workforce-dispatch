@@ -35,3 +35,26 @@ class AssessmentType(StrEnum):
     KNOWLEDGE_TEST = "KNOWLEDGE_TEST"
     PRACTICAL_VERIFICATION = "PRACTICAL_VERIFICATION"
     PERFORMANCE_REVIEW = "PERFORMANCE_REVIEW"
+
+
+class FulfillmentStatus(StrEnum):
+    """The outcome of matching a CrewRequirement line (or a whole
+    WorkRequirement) against currently eligible workers — computed fresh on
+    every read, never persisted, since worker availability/capability can
+    change between requests. See docs/WorkRequirement.md "Fulfillment
+    states" for the V1 policy and what's deliberately NOT built yet
+    (adjacent-capability substitution, crew substitution) — those are
+    reserved tiers between FULFILLED and ESCALATED that a future patch can
+    add without changing this enum's meaning for existing callers.
+
+    - FULFILLED: at least `quantity` eligible candidates were found.
+    - PARTIALLY_FULFILLED: some, but fewer than `quantity`, eligible
+      candidates were found — not a silent failure, a distinct state the
+      caller must handle.
+    - ESCALATED: zero eligible candidates — the requirement cannot be
+      fulfilled from the current worker pool and needs human attention.
+    """
+
+    FULFILLED = "FULFILLED"
+    PARTIALLY_FULFILLED = "PARTIALLY_FULFILLED"
+    ESCALATED = "ESCALATED"

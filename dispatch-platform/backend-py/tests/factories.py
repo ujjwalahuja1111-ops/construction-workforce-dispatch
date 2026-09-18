@@ -18,7 +18,15 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.infrastructure.db.models import TaskModel, TradeModel, UserModel, WorkerModel
+from app.domain.enums import CapabilityProvenance
+from app.infrastructure.db.models import (
+    TaskModel,
+    TradeModel,
+    UserModel,
+    WorkerCapabilityModel,
+    WorkerModel,
+    WorkerSafetyQualificationModel,
+)
 from app.infrastructure.security.jwt import create_access_token
 
 
@@ -103,6 +111,7 @@ def create_worker(
     skills: str | None = "MASON,HELPER",
     city: str = "Bengaluru",
     state: str = "Karnataka",
+    is_available: bool = True,
 ) -> CreatedWorker:
     """Creates a real User+Worker pair directly via the ORM, mirroring
     helpers.ts#createWorker(). A fresh phone number per call, scoped to the
@@ -118,10 +127,78 @@ def create_worker(
     )
     db.add(user)
     db.flush()
-    worker = WorkerModel(user_id=user.id, legacy_skills_csv=skills, city=city, state=state)
+    worker = WorkerModel(
+        user_id=user.id, legacy_skills_csv=skills, city=city, state=state, is_available=is_available
+    )
     db.add(worker)
     db.commit()
     return CreatedWorker(user=user, worker=worker)
+
+
+@dataclass(slots=True)
+class CreatedContractor:
+    user: UserModel
+
+
+def create_contractor(db: Session) -> CreatedContractor:
+    """A contractor is just a User with role CONTRACTOR on the Python side
+    — there's no Contractor-profile table here yet (see models.py module
+    docstring), so this is the whole factory."""
+    global _phone_counter
+    _phone_counter += 1
+    user = UserModel(
+        phone=f"+9198{2000000 + _phone_counter:07d}",
+        role="CONTRACTOR",
+        full_name=f"Test Contractor {_phone_counter}",
+        is_verified=True,
+    )
+    db.add(user)
+    db.commit()
+    return CreatedContractor(user=user)
+
+
+def grant_capability(
+    db: Session,
+    *,
+    worker_id: str,
+    task_id: str,
+    level: int,
+    provenance: CapabilityProvenance = CapabilityProvenance.SELF_DECLARED,
+) -> WorkerCapabilityModel:
+    """Seeds a WorkerCapability row directly via the ORM — used where a
+    test needs a specific provenance (e.g. ASSESSED) or just wants a
+    capability in place without exercising the self-declare API."""
+    row = WorkerCapabilityModel(
+        worker_id=worker_id, task_id=task_id, level=level, provenance=provenance.value
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def set_capability_level(db: Session, *, worker_id: str, task_id: str, level: int) -> WorkerCapabilityModel:
+    """Updates an existing WorkerCapability row's level in place (raw ORM
+    update, no Assessment row written) — for a test that needs to change a
+    worker's level after `grant_capability` already created the row, where
+    inserting a second row would violate the (worker_id, task_id) unique
+    constraint."""
+    row = (
+        db.query(WorkerCapabilityModel)
+        .filter_by(worker_id=worker_id, task_id=task_id)
+        .one()
+    )
+    row.level = level
+    db.commit()
+    return row
+
+
+def grant_safety_qualification(
+    db: Session, *, worker_id: str, task_id: str
+) -> WorkerSafetyQualificationModel:
+    row = WorkerSafetyQualificationModel(worker_id=worker_id, task_id=task_id)
+    db.add(row)
+    db.commit()
+    return row
 
 
 def auth_header(*, user_id: str, role: str, phone: str, settings: Settings) -> dict[str, str]:

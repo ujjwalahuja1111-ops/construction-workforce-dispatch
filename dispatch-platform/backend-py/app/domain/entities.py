@@ -4,11 +4,13 @@ Pydantic/FastAPI. Business rules operate on these, not on ORM rows or API
 schemas, so the domain layer stays independent of both the persistence
 mechanism and the transport format (clean-architecture "domain" layer).
 
-Only the entities the approved capability model needs, plus the minimal
-User/Worker identity the foreign keys require. Job/Shift/Rating/Crew/
-WorkRequirement/DispatchEngine are deliberately not represented here yet —
-see docs/PythonMigration.md for what this foundation patch does and does
-not include.
+The capability model (Trade/Task/WorkerCapability/Assessment) plus the
+minimal User/Worker identity those need, and the work-requirement /
+dispatch-candidate slice (WorkRequirement/CrewRequirement/
+WorkerSafetyQualification — see docs/WorkRequirement.md). Job/Shift/Rating/
+DispatchEngine (the legacy TS execution pipeline) are deliberately not
+represented here yet — see docs/PythonMigration.md for what this backend
+does and does not include.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ class Worker:
     # row created here stays shape-compatible with the TS Worker row it
     # mirrors during the migration window.
     legacy_skills_csv: str | None
+    is_available: bool
     created_at: datetime
     updated_at: datetime
 
@@ -95,3 +98,54 @@ class Assessment:
     assessed_at: datetime
     evidence_notes: str | None
     created_at: datetime
+
+
+@dataclass(slots=True)
+class WorkRequirement:
+    id: str
+    contractor_user_id: str
+    city: str | None
+    state: str | None
+    requested_for: datetime | None
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class CrewRequirement:
+    """One line within a WorkRequirement — N workers of `task_id` at
+    `min_level` or above. `safety_qualification_required` is a snapshot
+    taken at creation time (see app/services/classification_service.py),
+    not re-derived from Task on every read."""
+
+    id: str
+    work_requirement_id: str
+    task_id: str
+    min_level: int
+    quantity: int
+    safety_qualification_required: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class WorkerSafetyQualification:
+    id: str
+    worker_id: str
+    task_id: str
+    granted_at: datetime
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class NewCrewRequirementLine:
+    """Input DTO for CrewRequirementRepository.create_many — not itself
+    persisted (see CrewRequirement for the persisted shape). Kept in the
+    domain layer because it's a value the service layer passes across the
+    repository boundary, same reasoning as the other entities here."""
+
+    task_id: str
+    min_level: int
+    quantity: int
+    safety_qualification_required: bool

@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, health, worker_capabilities
+from app.api.routes import auth, health, work_requirements, worker_capabilities
 from app.config import get_settings
 from app.core.errors import AppError
 
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=api)
     app.include_router(auth.router, prefix=api)
     app.include_router(worker_capabilities.router, prefix=api)
+    app.include_router(work_requirements.router, prefix=api)
 
     @app.get("/")
     def root() -> dict[str, str]:

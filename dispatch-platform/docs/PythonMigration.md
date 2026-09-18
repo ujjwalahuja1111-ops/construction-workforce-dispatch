@@ -1,8 +1,11 @@
 # Python Backend Migration
 
-**Status:** Foundation patch landed, and the worker capability self-declaration API (`POST`/`GET
-/api/worker/capabilities`) is now ported on top of it. This is still not a replacement for the
-TypeScript backend yet — see "What is authoritative" below.
+**Status:** Foundation patch landed, the worker capability self-declaration API (`POST`/`GET
+/api/worker/capabilities`) is ported on top of it, and the first slice of the redesigned product loop —
+work requirements, crew requirements, and capability-based dispatch-candidate matching (`POST`/`GET
+/api/work-requirements`) — now sits on top of both. See `docs/WorkRequirement.md` for that slice in full;
+this document stays focused on backend/TS-vs-Python migration status. This is still not a replacement for
+the TypeScript backend yet — see "What is authoritative" below.
 
 ## Why
 
@@ -54,6 +57,16 @@ Column-for-column, from `backend/prisma/schema.prisma` and `backend/src/types/do
   `joinedload` on `task`/`task.trade` so the response never issues N+1 queries. Verified against all 12
   contract test cases from `patch2-contract-v2.md` §10 (`backend-py/tests/test_worker_capabilities.py`,
   ported case-for-case from `backend/tests/worker-capability.test.ts`).
+- **Work requirement / crew requirement / dispatch candidates** (`POST`/`GET /api/work-requirements`,
+  `CONTRACTOR`-only to create, owning contractor or `ADMIN` to view) — the redesigned product loop's first
+  real slice: `WorkRequirement` + `CrewRequirement` (new tables), a deterministic, AI-free classification
+  step, capability-based eligibility matching (task, minimum level, availability, location, safety
+  qualification), and cross-line crew assembly that never double-books a worker across two lines of the
+  same requirement. Returns a live-computed `FulfillmentStatus` (`FULFILLED` / `PARTIALLY_FULFILLED` /
+  `ESCALATED`) per line and overall — never a silent empty result. Does **not** create a `Job`/`JobOffer`/
+  `Shift` or touch the legacy `DispatchEngine` in any way. Full writeup, including the architectural
+  decisions (why status is based on assembled candidates rather than raw eligibility, why location
+  matching is city-only, what a candidate view does and doesn't expose) in `docs/WorkRequirement.md`.
 
 ## What has deliberately NOT been ported (yet)
 
@@ -96,6 +109,14 @@ business rules, and `backend-py/` as reference/migration material moving in the 
 how this document opens — i.e., during the build-out of a not-yet-ported surface, `backend/`'s existing
 implementation is what a new `backend-py/` patch should read to preserve semantics, exactly as this
 foundation patch read `prisma/schema.prisma` and `domain.ts` rather than inventing new shapes.
+
+**Work requirements are the one deliberate exception to "read `backend/` to preserve semantics."** There
+is no `WorkRequirement`/`CrewRequirement` model in the TS backend to port — the CTO's redesign direction is
+explicit that the legacy single-skill `Job` (skill + headcount) must not become the permanent product
+abstraction, so this is new product architecture built fresh in `backend-py/`, not a port. `backend/`'s
+`Job`/`JobOffer`/`Shift`/`DispatchEngine` keep running unchanged and un-superseded for now (nothing calls
+the new model from the mobile app yet); see `docs/WorkRequirement.md` for what this new slice does and
+deliberately does not do.
 
 ## Running it locally
 
