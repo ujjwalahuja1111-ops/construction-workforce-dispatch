@@ -87,6 +87,9 @@ model Worker {
   offers     JobOffer[]
   shifts     Shift[]
   ratings    Rating[]
+  // Patch 1 (Milestone 0C): the new capability graph. Additive only — not
+  // read by dispatch/TrustEngine yet. See CapabilityModel.md.
+  capabilities WorkerCapability[]
 
   @@index([city])
   @@index([isAvailable])
@@ -281,4 +284,92 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
+}
+
+// -----------------------------------------------------------------------------
+// CAPABILITY TAXONOMY — Patch 1 / Milestone 0C (additive only)
+//
+// Trade -> Task -> WorkerCapability -> Assessment is a brand-new capability
+// graph that runs BESIDE the legacy flat-skill system (Worker.skills,
+// Job.skill). Neither Worker.skills nor Job.skill/JobOffer/Shift/DispatchEngine
+// change in this patch, and DispatchEngine keeps using the legacy flat skill
+// match exclusively — this graph is not yet read by anything at runtime.
+// See docs/CapabilityModel.md for the full writeup (level/provenance
+// semantics, why enums are plain strings here, and the migration story).
+// -----------------------------------------------------------------------------
+
+model Trade {
+  id          String   @id @default(uuid())
+  code        String   @unique                 // stable machine-readable code, e.g. "MASONRY"
+  name        String
+  description String?
+  isActive    Boolean  @default(true)           // deactivate, never delete a referenced Trade
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks Task[]
+
+  @@index([isActive])
+}
+
+model Task {
+  id                           String   @id @default(uuid())
+  tradeId                      String
+  code                         String   @unique   // stable machine-readable code, e.g. "BRICKWORK_NEW_WALL"
+  name                         String
+  description                  String?
+  safetyQualificationRequired  Boolean  @default(false)
+  adjacencyGroup               String?             // reserved for future dispatch-fallback grouping; inert today
+  isActive                     Boolean  @default(true) // deactivate, never hard-delete a referenced Task
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+
+  // Restrict, not Cascade: a Trade with Tasks under it must be deactivated,
+  // never deleted (see model Trade above) — the FK enforces that at the DB
+  // layer too, not just by app-layer convention.
+  trade        Trade              @relation(fields: [tradeId], references: [id], onDelete: Restrict)
+  capabilities WorkerCapability[]
+
+  @@index([tradeId])
+  @@index([isActive])
+}
+
+model WorkerCapability {
+  id             String    @id @default(uuid())
+  workerId       String
+  taskId         String
+  level          Int                       // 1-4; enforced by CapabilityService, not a DB constraint (matches every other enum-like column in this schema, e.g. Job.status/Shift.state — see KnownLimitations.md F2)
+  provenance     String                    // SELF_DECLARED | ASSESSED | PRACTICALLY_VERIFIED | PERFORMANCE_CONFIRMED — enforced by CapabilityService
+  confidence     Float?                    // reserved; no formula defined in this patch — see docs/CapabilityModel.md §Confidence
+  restrictions   String?                   // reserved for future structured restrictions; opaque string for now
+  lastVerifiedAt DateTime?
+  evidenceRef    String?                   // reserved for future evidence linkage; opaque string for now
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  worker      Worker       @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  // Restrict: a Task with capability records against it must be deactivated,
+  // never hard-deleted (see model Task above).
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  assessments Assessment[]
+
+  @@unique([workerId, taskId])
+  @@index([taskId])
+}
+
+model Assessment {
+  id                 String   @id @default(uuid())
+  workerCapabilityId String
+  type               String                // SELF_DECLARATION | KNOWLEDGE_TEST | PRACTICAL_VERIFICATION | PERFORMANCE_REVIEW — enforced by CapabilityService
+  result             String                // free-form outcome/summary; see docs/CapabilityModel.md
+  assessedBy         String?               // opaque id of the assessor (contractor/admin user id) or null for a self-declaration; intentionally NOT an FK to User — see Patch 1 report, "architectural decisions"
+  assessedAt         DateTime @default(now())
+  evidenceNotes      String?
+  createdAt          DateTime @default(now())
+  // No `updatedAt` — Assessment rows are append-only evidence; the service
+  // layer does not expose an update path (see CapabilityService).
+
+  workerCapability WorkerCapability @relation(fields: [workerCapabilityId], references: [id], onDelete: Cascade)
+
+  @@index([workerCapabilityId])
 }

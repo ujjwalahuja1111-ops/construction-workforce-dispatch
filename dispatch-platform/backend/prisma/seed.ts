@@ -10,6 +10,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { seedTaxonomy } from './seeds/taxonomy';
 
 const prisma = new PrismaClient();
 
@@ -36,6 +37,12 @@ function pickN<T>(arr: T[], n: number): T[] {
 
 async function main() {
   console.log('Seeding database...');
+
+  // Patch 1 / Milestone 0C capability taxonomy — upsert-idempotent, and
+  // deliberately NOT part of the destructive delete-then-recreate block
+  // below (that block only ever touches the legacy tables it always has).
+  const taxonomy = await seedTaxonomy(prisma);
+  console.log(`Capability taxonomy: ${taxonomy.trades} trades, ${taxonomy.tasks} tasks.`);
 
   // Clear existing (idempotent)
   await prisma.shiftEvent.deleteMany();
