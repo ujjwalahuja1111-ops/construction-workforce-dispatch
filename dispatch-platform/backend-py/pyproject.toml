@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's Depends(...)-in-default-argument is the framework's own idiom,
+# not a mutable-default-argument bug — ruff's B008 doesn't know that.
+"app/api/**" = ["B008"]
+"alembic/env.py" = ["I001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+exclude = ["^alembic/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
