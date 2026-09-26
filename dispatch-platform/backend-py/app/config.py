@@ -37,6 +37,11 @@ class Settings(BaseSettings):
 
     cors_origin: str = "*"
 
+    # Dispatch Offer TTL — matches the legacy TS DispatchEngine's 15-minute
+    # default (see docs/DispatchEngine.md); deterministic and configurable,
+    # not a background scheduler (see docs/Dispatch.md "Expiry").
+    dispatch_offer_ttl_minutes: int = 15
+
 
 @lru_cache
 def get_settings() -> Settings:

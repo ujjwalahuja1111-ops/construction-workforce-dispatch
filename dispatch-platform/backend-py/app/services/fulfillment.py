@@ -42,6 +42,30 @@ def line_status(assigned_count: int, quantity: int) -> FulfillmentStatus:
     return FulfillmentStatus.ESCALATED
 
 
+def dispatch_line_status(*, committed_count: int, escalated_count: int, quantity: int) -> FulfillmentStatus:
+    """The commitment-based counterpart to `line_status` above — see
+    `FulfillmentStatus`'s docstring "Two fulfilment signals, not one" and
+    docs/Dispatch.md. Driven by actual DispatchPosition state, not the
+    assembled-candidate count:
+
+    - FULFILLED: every position for this line is COMMITTED.
+    - ESCALATED: at least one position has exhausted every valid candidate
+      (position-level ESCALATED) — "no viable path for a required
+      position," regardless of how many other positions on the same line
+      are already committed.
+    - PARTIALLY_FULFILLED: anything else — some committed, some still
+      open/offered and not (yet) escalated. This deliberately covers "not
+      yet dispatched at all" as well as "in progress": neither is a
+      failure state, so neither is ESCALATED; "unresolved" is the accurate
+      word for both.
+    """
+    if committed_count >= quantity:
+        return FulfillmentStatus.FULFILLED
+    if escalated_count > 0:
+        return FulfillmentStatus.ESCALATED
+    return FulfillmentStatus.PARTIALLY_FULFILLED
+
+
 def overall_status(line_statuses: list[FulfillmentStatus]) -> FulfillmentStatus:
     """A WorkRequirement with zero lines is treated as ESCALATED, not
     FULFILLED — classify_lines() already rejects an empty line list before

@@ -12,6 +12,8 @@ from typing import Protocol
 
 from app.domain.entities import (
     CrewRequirement,
+    DispatchOffer,
+    DispatchPosition,
     NewCrewRequirementLine,
     Task,
     Trade,
@@ -20,6 +22,7 @@ from app.domain.entities import (
     WorkerSafetyQualification,
     WorkRequirement,
 )
+from app.domain.enums import OfferStatus, PositionStatus
 from app.domain.views import EligibleWorkerView, WorkerCapabilityView
 
 
@@ -74,6 +77,53 @@ class CrewRequirementRepository(Protocol):
         self, work_requirement_id: str, lines: list[NewCrewRequirementLine]
     ) -> list[CrewRequirement]: ...
     def list_for_work_requirement(self, work_requirement_id: str) -> list[CrewRequirement]: ...
+    def get_by_id(self, crew_requirement_id: str) -> CrewRequirement | None: ...
+
+
+class DispatchPositionRepository(Protocol):
+    def create_many_for_line(
+        self, *, work_requirement_id: str, crew_requirement_id: str, quantity: int
+    ) -> list[DispatchPosition]: ...
+    def list_for_work_requirement(self, work_requirement_id: str) -> list[DispatchPosition]: ...
+    def list_for_crew_requirement(self, crew_requirement_id: str) -> list[DispatchPosition]: ...
+    def get_by_id(self, position_id: str) -> DispatchPosition | None: ...
+    def try_transition(
+        self,
+        position_id: str,
+        *,
+        expected_status: PositionStatus,
+        new_status: PositionStatus,
+        worker_id: str | None,
+    ) -> bool: ...
+    def committed_worker_ids_on_date(
+        self, *, on_date: datetime, exclude_work_requirement_id: str
+    ) -> set[str]: ...
+
+
+class DispatchOfferRepository(Protocol):
+    def create(self, *, position_id: str, worker_id: str, expires_at: datetime) -> DispatchOffer: ...
+    def get_by_id(self, offer_id: str) -> DispatchOffer | None: ...
+    def try_transition(
+        self,
+        offer_id: str,
+        *,
+        expected_status: OfferStatus,
+        new_status: OfferStatus,
+        responded_at: datetime | None,
+    ) -> bool: ...
+    def cancel_other_pending_for_position(
+        self, position_id: str, *, except_offer_id: str, responded_at: datetime
+    ) -> list[DispatchOffer]: ...
+    def pending_worker_ids_for_work_requirement(
+        self, work_requirement_id: str, *, now: datetime
+    ) -> set[str]: ...
+    def pending_worker_ids_on_date(
+        self, *, on_date: datetime, exclude_work_requirement_id: str, now: datetime
+    ) -> set[str]: ...
+    def previously_declined_or_expired_worker_ids(self, position_id: str) -> set[str]: ...
+    def list_expired_pending(self, *, now: datetime) -> list[DispatchOffer]: ...
+    def count_pending_for_positions(self, position_ids: list[str]) -> int: ...
+    def list_for_position(self, position_id: str) -> list[DispatchOffer]: ...
 
 
 __all__ = [
@@ -84,4 +134,6 @@ __all__ = [
     "WorkerSafetyQualificationRepository",
     "WorkRequirementRepository",
     "CrewRequirementRepository",
+    "DispatchPositionRepository",
+    "DispatchOfferRepository",
 ]

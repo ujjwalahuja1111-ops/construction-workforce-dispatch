@@ -21,10 +21,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
+from app.config import Settings, get_settings
 from app.domain.enums import Role
-from app.domain.views import CrewRequirementResultView, EligibleWorkerView, WorkRequirementResultView
+from app.domain.views import (
+    CrewRequirementResultView,
+    DispatchOfferView,
+    DispatchSummaryView,
+    EligibleWorkerView,
+    PositionDispatchOutcomeView,
+    WorkRequirementResultView,
+)
 from app.infrastructure.security.jwt import TokenPayload
 from app.services.classification_service import RequestedLine
+from app.services.dispatch_service import DispatchService
 from app.services.work_requirement_service import WorkRequirementService
 
 router = APIRouter(prefix="/work-requirements", tags=["work-requirements"])
@@ -98,6 +107,14 @@ class CrewRequirementOut(BaseModel):
     eligible_count: int = Field(serialization_alias="eligibleCount")
     eligible_workers: list[EligibleWorkerOut] = Field(serialization_alias="eligibleWorkers")
     candidates: list[EligibleWorkerOut]
+    # Dispatch/commitment operational info — additive, see
+    # FulfillmentStatus's "Two fulfilment signals, not one".
+    required_positions: int = Field(serialization_alias="requiredPositions")
+    committed_positions: int = Field(serialization_alias="committedPositions")
+    open_positions: int = Field(serialization_alias="openPositions")
+    escalated_positions: int = Field(serialization_alias="escalatedPositions")
+    pending_offers: int = Field(serialization_alias="pendingOffers")
+    dispatch_status: str = Field(serialization_alias="dispatchStatus")
 
 
 class WorkRequirementOut(BaseModel):
@@ -113,6 +130,12 @@ class WorkRequirementOut(BaseModel):
     created_at: str = Field(serialization_alias="createdAt")
     updated_at: str = Field(serialization_alias="updatedAt")
     lines: list[CrewRequirementOut]
+    required_positions: int = Field(serialization_alias="requiredPositions")
+    committed_positions: int = Field(serialization_alias="committedPositions")
+    open_positions: int = Field(serialization_alias="openPositions")
+    escalated_positions: int = Field(serialization_alias="escalatedPositions")
+    pending_offers: int = Field(serialization_alias="pendingOffers")
+    dispatch_status: str = Field(serialization_alias="dispatchStatus")
 
 
 def _shape_worker(view: EligibleWorkerView) -> EligibleWorkerOut:
@@ -139,6 +162,12 @@ def _shape_line(line: CrewRequirementResultView) -> CrewRequirementOut:
         eligible_count=len(line.eligible_workers),
         eligible_workers=[_shape_worker(w) for w in line.eligible_workers],
         candidates=[_shape_worker(w) for w in line.candidates],
+        required_positions=line.required_positions,
+        committed_positions=line.committed_positions,
+        open_positions=line.open_positions,
+        escalated_positions=line.escalated_positions,
+        pending_offers=line.pending_offers,
+        dispatch_status=line.dispatch_status.value,
     )
 
 
@@ -154,6 +183,12 @@ def _shape(view: WorkRequirementResultView) -> WorkRequirementOut:
         created_at=view.created_at.isoformat(),
         updated_at=view.updated_at.isoformat(),
         lines=[_shape_line(line_view) for line_view in view.lines],
+        required_positions=view.required_positions,
+        committed_positions=view.committed_positions,
+        open_positions=view.open_positions,
+        escalated_positions=view.escalated_positions,
+        pending_offers=view.pending_offers,
+        dispatch_status=view.dispatch_status.value,
     )
 
 
@@ -195,3 +230,86 @@ def get_work_requirement(
         str(work_requirement_id), requesting_user_id=token["sub"], requesting_role=token["role"]
     )
     return _shape(view)
+
+
+class DispatchOfferOut(BaseModel):
+    """Deliberately thin, same posture as EligibleWorkerOut — a dispatch
+    summary reports outcomes, never a worker-browsing marketplace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    worker_id: str = Field(serialization_alias="workerId")
+    status: str
+    expires_at: str = Field(serialization_alias="expiresAt")
+
+
+class PositionOutcomeOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    position_id: str = Field(serialization_alias="positionId")
+    crew_requirement_id: str = Field(serialization_alias="crewRequirementId")
+    task_code: str = Field(serialization_alias="taskCode")
+    status: str
+    offer: DispatchOfferOut | None
+
+
+class DispatchSummaryOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    work_requirement_id: str = Field(serialization_alias="workRequirementId")
+    positions: list[PositionOutcomeOut]
+    required_positions: int = Field(serialization_alias="requiredPositions")
+    committed_positions: int = Field(serialization_alias="committedPositions")
+    open_positions: int = Field(serialization_alias="openPositions")
+    escalated_positions: int = Field(serialization_alias="escalatedPositions")
+    pending_offers: int = Field(serialization_alias="pendingOffers")
+    dispatch_status: str = Field(serialization_alias="dispatchStatus")
+
+
+def _shape_offer(offer: DispatchOfferView) -> DispatchOfferOut:
+    return DispatchOfferOut(
+        id=offer.id,
+        worker_id=offer.worker_id,
+        status=offer.status.value,
+        expires_at=offer.expires_at.isoformat(),
+    )
+
+
+def _shape_outcome(outcome: PositionDispatchOutcomeView) -> PositionOutcomeOut:
+    return PositionOutcomeOut(
+        position_id=outcome.position_id,
+        crew_requirement_id=outcome.crew_requirement_id,
+        task_code=outcome.task_code,
+        status=outcome.status.value,
+        offer=_shape_offer(outcome.offer) if outcome.offer else None,
+    )
+
+
+def _shape_summary(summary: DispatchSummaryView) -> DispatchSummaryOut:
+    return DispatchSummaryOut(
+        work_requirement_id=summary.work_requirement_id,
+        positions=[_shape_outcome(o) for o in summary.positions],
+        required_positions=summary.required_positions,
+        committed_positions=summary.committed_positions,
+        open_positions=summary.open_positions,
+        escalated_positions=summary.escalated_positions,
+        pending_offers=summary.pending_offers,
+        dispatch_status=summary.dispatch_status.value,
+    )
+
+
+@router.post(
+    "/{work_requirement_id}/dispatch", response_model=DispatchSummaryOut, response_model_by_alias=True
+)
+def dispatch_work_requirement(
+    work_requirement_id: UUID,
+    token: TokenPayload = Depends(_require_contractor_or_admin),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> DispatchSummaryOut:
+    service = DispatchService(db, settings)
+    summary = service.dispatch(
+        str(work_requirement_id), requesting_user_id=token["sub"], requesting_role=token["role"]
+    )
+    return _shape_summary(summary)

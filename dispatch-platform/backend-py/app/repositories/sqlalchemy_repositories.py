@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
     CrewRequirement,
+    DispatchOffer,
+    DispatchPosition,
     NewCrewRequirementLine,
     Task,
     Trade,
@@ -22,11 +24,13 @@ from app.domain.entities import (
     WorkerSafetyQualification,
     WorkRequirement,
 )
-from app.domain.enums import AssessmentType, CapabilityProvenance
+from app.domain.enums import AssessmentType, CapabilityProvenance, OfferStatus, PositionStatus
 from app.domain.views import EligibleWorkerView, WorkerCapabilityView
 from app.infrastructure.db.models import (
     AssessmentModel,
     CrewRequirementModel,
+    DispatchOfferModel,
+    DispatchPositionModel,
     TaskModel,
     TradeModel,
     WorkerCapabilityModel,
@@ -109,6 +113,31 @@ def _safety_qualification_to_entity(row: WorkerSafetyQualificationModel) -> Work
         task_id=row.task_id,
         granted_at=row.granted_at,
         created_at=row.created_at,
+    )
+
+
+def _dispatch_position_to_entity(row: DispatchPositionModel) -> DispatchPosition:
+    return DispatchPosition(
+        id=row.id,
+        work_requirement_id=row.work_requirement_id,
+        crew_requirement_id=row.crew_requirement_id,
+        position_index=row.position_index,
+        worker_id=row.worker_id,
+        status=PositionStatus(row.status),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _dispatch_offer_to_entity(row: DispatchOfferModel) -> DispatchOffer:
+    return DispatchOffer(
+        id=row.id,
+        position_id=row.position_id,
+        worker_id=row.worker_id,
+        status=OfferStatus(row.status),
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+        responded_at=row.responded_at,
     )
 
 
@@ -408,3 +437,255 @@ class SqlAlchemyCrewRequirementRepository:
             .order_by(CrewRequirementModel.created_at)
         ).scalars()
         return [_crew_requirement_to_entity(r) for r in rows]
+
+    def get_by_id(self, crew_requirement_id: str) -> CrewRequirement | None:
+        row = self._db.get(CrewRequirementModel, crew_requirement_id)
+        return _crew_requirement_to_entity(row) if row else None
+
+
+class SqlAlchemyDispatchPositionRepository:
+    """Unlike the repositories above, the mutating methods here `flush()`
+    rather than `commit()` — DispatchService owns the transaction boundary
+    for a whole dispatch/accept/decline operation (position + offer(s)
+    mutated together, one commit at the end), the same posture as the TS
+    `ShiftService.transition`'s `prisma.$transaction(...)`. See
+    docs/Dispatch.md "Two-layer transition safety"."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create_many_for_line(
+        self, *, work_requirement_id: str, crew_requirement_id: str, quantity: int
+    ) -> list[DispatchPosition]:
+        rows = [
+            DispatchPositionModel(
+                work_requirement_id=work_requirement_id,
+                crew_requirement_id=crew_requirement_id,
+                position_index=i,
+                status=PositionStatus.OPEN.value,
+            )
+            for i in range(quantity)
+        ]
+        self._db.add_all(rows)
+        self._db.flush()
+        return [_dispatch_position_to_entity(r) for r in rows]
+
+    def list_for_work_requirement(self, work_requirement_id: str) -> list[DispatchPosition]:
+        rows = self._db.execute(
+            select(DispatchPositionModel)
+            .where(DispatchPositionModel.work_requirement_id == work_requirement_id)
+            .order_by(DispatchPositionModel.crew_requirement_id, DispatchPositionModel.position_index)
+        ).scalars()
+        return [_dispatch_position_to_entity(r) for r in rows]
+
+    def list_for_crew_requirement(self, crew_requirement_id: str) -> list[DispatchPosition]:
+        rows = self._db.execute(
+            select(DispatchPositionModel)
+            .where(DispatchPositionModel.crew_requirement_id == crew_requirement_id)
+            .order_by(DispatchPositionModel.position_index)
+        ).scalars()
+        return [_dispatch_position_to_entity(r) for r in rows]
+
+    def get_by_id(self, position_id: str) -> DispatchPosition | None:
+        row = self._db.get(DispatchPositionModel, position_id)
+        return _dispatch_position_to_entity(row) if row else None
+
+    def try_transition(
+        self,
+        position_id: str,
+        *,
+        expected_status: PositionStatus,
+        new_status: PositionStatus,
+        worker_id: str | None,
+    ) -> bool:
+        """The atomic concurrency guard: a single `UPDATE ... WHERE id = :id
+        AND status = :expected` statement. Whichever concurrent caller's
+        UPDATE the database engine applies first wins; the loser's
+        statement matches zero rows (the row no longer satisfies
+        `status = :expected` once the winner's write lands) — this is what
+        makes "exactly one succeeds" true even under genuine concurrent
+        requests, not just careful Python-level sequencing. Returns
+        whether THIS call's UPDATE was the one applied."""
+        result = self._db.execute(
+            update(DispatchPositionModel)
+            .where(
+                DispatchPositionModel.id == position_id,
+                DispatchPositionModel.status == expected_status.value,
+            )
+            .values(status=new_status.value, worker_id=worker_id)
+        )
+        self._db.flush()
+        return result.rowcount == 1
+
+    def committed_worker_ids_on_date(
+        self, *, on_date: datetime, exclude_work_requirement_id: str
+    ) -> set[str]:
+        """Cross-work-requirement conflict lookup — see docs/Dispatch.md
+        "Cross-work-requirement conflicts: the V1 rule" for exactly what
+        "on_date" means and what this deliberately does not attempt (no
+        overlap/time-range reasoning, no calendar)."""
+        rows = self._db.execute(
+            select(DispatchPositionModel.worker_id, WorkRequirementModel.requested_for)
+            .join(
+                WorkRequirementModel,
+                DispatchPositionModel.work_requirement_id == WorkRequirementModel.id,
+            )
+            .where(
+                DispatchPositionModel.status == PositionStatus.COMMITTED.value,
+                DispatchPositionModel.work_requirement_id != exclude_work_requirement_id,
+                WorkRequirementModel.requested_for.is_not(None),
+            )
+        ).all()
+        target = on_date.date()
+        return {
+            worker_id
+            for worker_id, requested_for in rows
+            if worker_id and requested_for.date() == target
+        }
+
+
+class SqlAlchemyDispatchOfferRepository:
+    """See SqlAlchemyDispatchPositionRepository's docstring — mutating
+    methods here `flush()`, not `commit()`, for the same reason."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create(self, *, position_id: str, worker_id: str, expires_at: datetime) -> DispatchOffer:
+        row = DispatchOfferModel(
+            position_id=position_id,
+            worker_id=worker_id,
+            status=OfferStatus.PENDING.value,
+            expires_at=expires_at,
+        )
+        self._db.add(row)
+        self._db.flush()
+        return _dispatch_offer_to_entity(row)
+
+    def get_by_id(self, offer_id: str) -> DispatchOffer | None:
+        row = self._db.get(DispatchOfferModel, offer_id)
+        return _dispatch_offer_to_entity(row) if row else None
+
+    def try_transition(
+        self,
+        offer_id: str,
+        *,
+        expected_status: OfferStatus,
+        new_status: OfferStatus,
+        responded_at: datetime | None,
+    ) -> bool:
+        result = self._db.execute(
+            update(DispatchOfferModel)
+            .where(DispatchOfferModel.id == offer_id, DispatchOfferModel.status == expected_status.value)
+            .values(status=new_status.value, responded_at=responded_at)
+        )
+        self._db.flush()
+        return result.rowcount == 1
+
+    def cancel_other_pending_for_position(
+        self, position_id: str, *, except_offer_id: str, responded_at: datetime
+    ) -> list[DispatchOffer]:
+        """"Competing offers: two workers have offers for one position; one
+        accepts; the other offer becomes CANCELLED" (TEST 9) — called
+        inside the same transaction as the winning accept, so a reader
+        never observes a moment where the position is COMMITTED but a
+        competing offer is still PENDING."""
+        rows = self._db.execute(
+            select(DispatchOfferModel).where(
+                DispatchOfferModel.position_id == position_id,
+                DispatchOfferModel.id != except_offer_id,
+                DispatchOfferModel.status == OfferStatus.PENDING.value,
+            )
+        ).scalars().all()
+        for row in rows:
+            row.status = OfferStatus.CANCELLED.value
+            row.responded_at = responded_at
+        self._db.flush()
+        return [_dispatch_offer_to_entity(r) for r in rows]
+
+    def pending_worker_ids_for_work_requirement(
+        self, work_requirement_id: str, *, now: datetime
+    ) -> set[str]:
+        """"Never offer the same worker twice for two positions within the
+        same WorkRequirement" (point 7) — every worker who currently holds
+        a live (PENDING, unexpired) offer anywhere in this WorkRequirement,
+        so the dispatch loop can exclude them from a second position."""
+        rows = self._db.execute(
+            select(DispatchOfferModel.worker_id)
+            .join(DispatchPositionModel, DispatchOfferModel.position_id == DispatchPositionModel.id)
+            .where(
+                DispatchPositionModel.work_requirement_id == work_requirement_id,
+                DispatchOfferModel.status == OfferStatus.PENDING.value,
+                DispatchOfferModel.expires_at > now,
+            )
+        ).scalars()
+        return set(rows)
+
+    def pending_worker_ids_on_date(
+        self, *, on_date: datetime, exclude_work_requirement_id: str, now: datetime
+    ) -> set[str]:
+        """Cross-work-requirement counterpart to
+        `pending_worker_ids_for_work_requirement` — a worker already
+        holding a live offer for a conflicting date elsewhere must not
+        receive a second one here."""
+        rows = self._db.execute(
+            select(DispatchOfferModel.worker_id, WorkRequirementModel.requested_for)
+            .join(DispatchPositionModel, DispatchOfferModel.position_id == DispatchPositionModel.id)
+            .join(
+                WorkRequirementModel,
+                DispatchPositionModel.work_requirement_id == WorkRequirementModel.id,
+            )
+            .where(
+                DispatchOfferModel.status == OfferStatus.PENDING.value,
+                DispatchOfferModel.expires_at > now,
+                DispatchPositionModel.work_requirement_id != exclude_work_requirement_id,
+                WorkRequirementModel.requested_for.is_not(None),
+            )
+        ).all()
+        target = on_date.date()
+        return {
+            worker_id
+            for worker_id, requested_for in rows
+            if worker_id and requested_for.date() == target
+        }
+
+    def previously_declined_or_expired_worker_ids(self, position_id: str) -> set[str]:
+        """"System must not repeatedly offer the same worker after they
+        already declined/expired for that same position" — scoped to ONE
+        position (a worker who declined position A of a 2-position line may
+        still be validly offered position B)."""
+        rows = self._db.execute(
+            select(DispatchOfferModel.worker_id).where(
+                DispatchOfferModel.position_id == position_id,
+                DispatchOfferModel.status.in_([OfferStatus.DECLINED.value, OfferStatus.EXPIRED.value]),
+            )
+        ).scalars()
+        return set(rows)
+
+    def list_expired_pending(self, *, now: datetime) -> list[DispatchOffer]:
+        rows = self._db.execute(
+            select(DispatchOfferModel).where(
+                DispatchOfferModel.status == OfferStatus.PENDING.value,
+                DispatchOfferModel.expires_at <= now,
+            )
+        ).scalars()
+        return [_dispatch_offer_to_entity(r) for r in rows]
+
+    def count_pending_for_positions(self, position_ids: list[str]) -> int:
+        if not position_ids:
+            return 0
+        rows = self._db.execute(
+            select(DispatchOfferModel.id).where(
+                DispatchOfferModel.position_id.in_(position_ids),
+                DispatchOfferModel.status == OfferStatus.PENDING.value,
+            )
+        ).scalars().all()
+        return len(rows)
+
+    def list_for_position(self, position_id: str) -> list[DispatchOffer]:
+        rows = self._db.execute(
+            select(DispatchOfferModel)
+            .where(DispatchOfferModel.position_id == position_id)
+            .order_by(DispatchOfferModel.created_at)
+        ).scalars()
+        return [_dispatch_offer_to_entity(r) for r in rows]

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.domain.enums import AssessmentType, CapabilityProvenance, Role
+from app.domain.enums import AssessmentType, CapabilityProvenance, OfferStatus, PositionStatus, Role
 
 
 @dataclass(slots=True)
@@ -149,3 +149,37 @@ class NewCrewRequirementLine:
     min_level: int
     quantity: int
     safety_qualification_required: bool
+
+
+@dataclass(slots=True)
+class DispatchPosition:
+    """One independently fulfillable unit of a CrewRequirement's `quantity`
+    — "the position is the unit that gets fulfilled." `position_index` is a
+    0-based ordinal unique within `crew_requirement_id`, giving each
+    position a stable identity distinct from its (mutable) lifecycle state.
+    `worker_id` is set if and only if `status == COMMITTED` — enforced by a
+    DB check constraint (see DispatchPositionModel), not just convention."""
+
+    id: str
+    work_requirement_id: str
+    crew_requirement_id: str
+    position_index: int
+    worker_id: str | None
+    status: PositionStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class DispatchOffer:
+    """One position, one worker. `responded_at` is set on ACCEPTED/
+    DECLINED (a worker's own action) and left None for a system-driven
+    EXPIRED/CANCELLED transition — see docs/Dispatch.md."""
+
+    id: str
+    position_id: str
+    worker_id: str
+    status: OfferStatus
+    created_at: datetime
+    expires_at: datetime
+    responded_at: datetime | None

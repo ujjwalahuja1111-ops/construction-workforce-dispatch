@@ -37,3 +37,14 @@ class AppError(Exception):
     @classmethod
     def conflict(cls, message: str) -> AppError:
         return cls(409, "CONFLICT", message)
+
+    @classmethod
+    def invalid_state(cls, message: str) -> AppError:
+        """Mirrors the TypeScript backend's `AppError.invalidState`
+        (raised by `ShiftEngine.assertTransition` — src/engines/shift.engine.ts)
+        — an illegal state-machine transition. Same 409 status as a plain
+        conflict (both mean "the current state doesn't allow this"), a
+        distinct code so a client can tell "someone else already resolved
+        this" (CONFLICT) apart from "this transition is never legal"
+        (INVALID_STATE)."""
+        return cls(409, "INVALID_STATE", message)

@@ -1,10 +1,12 @@
 # Python Backend Migration
 
 **Status:** Foundation patch landed, the worker capability self-declaration API (`POST`/`GET
-/api/worker/capabilities`) is ported on top of it, and the first slice of the redesigned product loop —
+/api/worker/capabilities`) is ported on top of it, the first slice of the redesigned product loop —
 work requirements, crew requirements, and capability-based dispatch-candidate matching (`POST`/`GET
-/api/work-requirements`) — now sits on top of both. See `docs/WorkRequirement.md` for that slice in full;
-this document stays focused on backend/TS-vs-Python migration status. This is still not a replacement for
+/api/work-requirements`) — sits on top of both, and dispatch/offer/commitment (`POST
+/api/work-requirements/{id}/dispatch`, `POST`/`api/dispatch/offers/{id}/accept`|`decline`) now sits on
+top of that. See `docs/WorkRequirement.md` and `docs/Dispatch.md` for those two slices in full; this
+document stays focused on backend/TS-vs-Python migration status. This is still not a replacement for
 the TypeScript backend yet — see "What is authoritative" below.
 
 ## Why
@@ -67,6 +69,15 @@ Column-for-column, from `backend/prisma/schema.prisma` and `backend/src/types/do
   `Shift` or touch the legacy `DispatchEngine` in any way. Full writeup, including the architectural
   decisions (why status is based on assembled candidates rather than raw eligibility, why location
   matching is city-only, what a candidate view does and doesn't expose) in `docs/WorkRequirement.md`.
+- **Dispatch position / dispatch offer / commitment** (`POST /api/work-requirements/{id}/dispatch`,
+  `POST /api/dispatch/offers/{id}/accept`|`decline`, `POST /api/dispatch/offers/expire`) — the next
+  vertical slice on top of the one above: turns dispatch *candidates* into dispatch *positions*, real
+  worker *offers*, acceptance/decline, deterministic TTL-based expiry, redispatch, and cross-
+  work-requirement conflict exclusion. Adds a second, commitment-based fulfilment signal
+  (`dispatchStatus`) alongside the existing candidate-assembly `status`, without changing the latter's
+  semantics or breaking any of Patch 2's existing tests. Ends at COMMITTED — no `Shift`/execution
+  integration yet, and still does not touch the legacy `Job`/`JobOffer`/`Shift`/`DispatchEngine`. Full
+  writeup in `docs/Dispatch.md`.
 
 ## What has deliberately NOT been ported (yet)
 

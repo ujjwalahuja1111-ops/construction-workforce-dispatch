@@ -111,6 +111,11 @@ the legacy TypeScript `DispatchEngine` already does today (see `docs/DispatchEng
 machinery on the Python side, before this new model has been used or validated, is out of scope. This patch
 stops at "here are the correct candidates," which is what Phase F explicitly asks for.
 
+**Update:** the next patch (see `docs/Dispatch.md`) builds exactly this on top of this slice, without
+changing anything described on this page. The `status` field here is unchanged; `docs/Dispatch.md` adds
+a second, additive `dispatchStatus` signal instead of redefining this one. The two limitations noted
+below (no persisted commitment, no cross-work-requirement awareness) are what that patch resolves.
+
 ## What the candidate view exposes, and what it doesn't
 
 `EligibleWorkerView`/`EligibleWorkerOut` carries `workerId`, matched `level`, `provenance`, and

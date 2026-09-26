@@ -27,9 +27,21 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.domain.enums import OfferStatus, PositionStatus
 from app.infrastructure.db.base import Base
 
 
@@ -234,3 +246,98 @@ class WorkerSafetyQualificationModel(Base):
 
     worker: Mapped[WorkerModel] = relationship(back_populates="safety_qualifications")
     task: Mapped[TaskModel] = relationship(back_populates="safety_qualifications")
+
+
+# -----------------------------------------------------------------------------
+# DISPATCH POSITION / DISPATCH OFFER — the dispatch-candidate -> actual-
+# commitment slice. See docs/Dispatch.md for the model writeup.
+# -----------------------------------------------------------------------------
+
+
+class DispatchPositionModel(Base):
+    """One independently fulfillable unit of a CrewRequirement's quantity.
+    `position_index` (0-based, unique within `crew_requirement_id`) gives
+    each position a stable identity separate from its lifecycle state —
+    the "position identity" the CTO's order asks database constraints to
+    protect. The check constraint below is the DB-level backstop for "one
+    committed worker per position": `worker_id` can be non-null if and only
+    if `status` is COMMITTED, so a position can never end up with a worker
+    reference left dangling in any other state."""
+
+    __tablename__ = "dispatch_positions"
+    __table_args__ = (
+        UniqueConstraint(
+            "crew_requirement_id", "position_index", name="uq_dispatch_position_line_index"
+        ),
+        CheckConstraint(
+            "(status = 'COMMITTED' AND worker_id IS NOT NULL) "
+            "OR (status != 'COMMITTED' AND worker_id IS NULL)",
+            name="ck_dispatch_position_committed_worker",
+        ),
+        Index("ix_dispatch_position_worker_status", "worker_id", "status"),
+        Index("ix_dispatch_position_work_requirement", "work_requirement_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    work_requirement_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("work_requirements.id", ondelete="CASCADE"), nullable=False
+    )
+    crew_requirement_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("crew_requirements.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Restrict, not Cascade — deleting a Worker row must not silently erase
+    # which position they were committed to; same convention as Task FKs
+    # elsewhere in this file.
+    worker_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("workers.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=PositionStatus.OPEN.value)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    work_requirement: Mapped[WorkRequirementModel] = relationship()
+    crew_requirement: Mapped[CrewRequirementModel] = relationship()
+    worker: Mapped[WorkerModel | None] = relationship()
+    offers: Mapped[list[DispatchOfferModel]] = relationship(
+        back_populates="position", cascade="all, delete-orphan", order_by="DispatchOfferModel.created_at"
+    )
+
+
+class DispatchOfferModel(Base):
+    """One position, one worker. The partial unique index below is
+    "duplicate offer prevention": at most one PENDING offer may exist for a
+    given (position, worker) pair at a time — a worker who already declined
+    or expired for this position can be offered it again later (a new row,
+    once no PENDING row remains), but never holds two live offers for the
+    same position simultaneously."""
+
+    __tablename__ = "dispatch_offers"
+    __table_args__ = (
+        Index(
+            "uq_dispatch_offer_position_worker_pending",
+            "position_id",
+            "worker_id",
+            unique=True,
+            sqlite_where=text("status = 'PENDING'"),
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        Index("ix_dispatch_offer_worker_status", "worker_id", "status"),
+        Index("ix_dispatch_offer_position_status", "position_id", "status"),
+        Index("ix_dispatch_offer_status_expires", "status", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    position_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dispatch_positions.id", ondelete="CASCADE"), nullable=False
+    )
+    worker_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workers.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=OfferStatus.PENDING.value)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    position: Mapped[DispatchPositionModel] = relationship(back_populates="offers")
+    worker: Mapped[WorkerModel] = relationship()

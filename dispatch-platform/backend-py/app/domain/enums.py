@@ -38,23 +38,73 @@ class AssessmentType(StrEnum):
 
 
 class FulfillmentStatus(StrEnum):
-    """The outcome of matching a CrewRequirement line (or a whole
-    WorkRequirement) against currently eligible workers — computed fresh on
-    every read, never persisted, since worker availability/capability can
-    change between requests. See docs/WorkRequirement.md "Fulfillment
-    states" for the V1 policy and what's deliberately NOT built yet
-    (adjacent-capability substitution, crew substitution) — those are
-    reserved tiers between FULFILLED and ESCALATED that a future patch can
-    add without changing this enum's meaning for existing callers.
+    """Shared by two distinct computations — see docs/Dispatch.md "Two
+    fulfilment signals, not one" for the full rationale:
 
-    - FULFILLED: at least `quantity` eligible candidates were found.
-    - PARTIALLY_FULFILLED: some, but fewer than `quantity`, eligible
-      candidates were found — not a silent failure, a distinct state the
-      caller must handle.
-    - ESCALATED: zero eligible candidates — the requirement cannot be
-      fulfilled from the current worker pool and needs human attention.
+    - `WorkRequirementResultView.status` / `CrewRequirementResultView.status`
+      (Phase F/G, unchanged by the dispatch patch): candidate-assembly
+      based — "could this plausibly be crewed given who's currently
+      eligible." At least `quantity` assembled candidates -> FULFILLED;
+      some but not enough -> PARTIALLY_FULFILLED; none -> ESCALATED.
+    - `.dispatch_status` (new): actual-commitment based — "has this been
+      crewed via real offers and acceptances." All required positions
+      COMMITTED -> FULFILLED; some committed, none escalated ->
+      PARTIALLY_FULFILLED (covers "not yet dispatched" and "in progress"
+      alike — both are still workable, not a failure); any position that
+      has exhausted every valid candidate -> ESCALATED. See
+      app/services/fulfillment.py `dispatch_line_status`.
+
+    CANDIDATES ≠ COMMITTED WORKERS: the two can and do disagree (a line can
+    show FULFILLED candidate coverage while nothing has actually been
+    dispatched yet, hence PARTIALLY_FULFILLED/"unresolved" dispatch_status)
+    — that disagreement is the point, not a bug. Adjacent-capability
+    substitution and crew substitution remain deliberately unbuilt tiers
+    reserved on this same enum for both computations.
     """
 
     FULFILLED = "FULFILLED"
     PARTIALLY_FULFILLED = "PARTIALLY_FULFILLED"
     ESCALATED = "ESCALATED"
+
+
+class PositionStatus(StrEnum):
+    """Dispatch Position lifecycle. Each unit of a CrewRequirement's
+    `quantity` is one independently fulfillable position — this is the
+    minimum state model the CTO's "DISPATCH + COMMITMENT" order asks for:
+
+        OPEN -> OFFERED -> COMMITTED
+
+    plus the explicit failure/recovery transitions OFFERED->OPEN (decline
+    or expiry reopens the position), OFFERED->CANCELLED, and
+    COMMITTED->OPEN — the last one reachable ONLY through an explicit
+    replacement/re-dispatch operation, never an arbitrary status mutation
+    (see app/services/dispatch_state_machine.py and
+    DispatchService.accept_offer's docstring for how that's enforced in
+    code, not just by convention).
+
+    ESCALATED is reached only from OPEN/ESCALATED, and only when a dispatch
+    attempt finds zero valid candidates for that position — an explicit
+    "cannot currently be filled" signal, never a position silently left
+    OPEN forever with no visible reason. An ESCALATED position is still
+    reconsidered on the next dispatch call (new workers may register
+    capability later), so it is not a dead end.
+    """
+
+    OPEN = "OPEN"
+    OFFERED = "OFFERED"
+    COMMITTED = "COMMITTED"
+    ESCALATED = "ESCALATED"
+    CANCELLED = "CANCELLED"
+
+
+class OfferStatus(StrEnum):
+    """Dispatch Offer lifecycle — one position, one worker. Kept
+    intentionally small per the CTO's order ("keep the state model
+    small"): every terminal state is reached directly from PENDING, no
+    intermediate states."""
+
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    DECLINED = "DECLINED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
