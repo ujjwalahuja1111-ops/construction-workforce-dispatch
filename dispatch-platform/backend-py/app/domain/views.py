@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from app.domain.enums import CapabilityProvenance, FulfillmentStatus, OfferStatus, PositionStatus
+from app.domain.enums import CapabilityProvenance, FulfillmentStatus, OfferStatus, PositionStatus, ShiftStatus
 
 
 @dataclass(slots=True)
@@ -166,3 +166,25 @@ class OfferActionResultView:
 @dataclass(slots=True)
 class ExpireOffersResultView:
     processed: list[OfferActionResultView]
+
+
+@dataclass(slots=True)
+class ShiftView:
+    """Read-shape for a Shift/Execution — carries the joined
+    `work_requirement_id`/`crew_requirement_id` an API response needs
+    (see docs/Execution.md) without those living on the Shift row itself;
+    both are resolved via `dispatch_position_id` -> DispatchPosition, which
+    already holds them. Same posture as `WorkerCapabilityView` joining in
+    task/trade fields for its response shape."""
+
+    id: str
+    dispatch_position_id: str
+    worker_id: str
+    work_requirement_id: str
+    crew_requirement_id: str
+    scheduled_for: datetime | None
+    status: ShiftStatus
+    check_in_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime

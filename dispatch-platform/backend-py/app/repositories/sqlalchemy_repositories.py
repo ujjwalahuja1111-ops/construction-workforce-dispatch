@@ -17,6 +17,7 @@ from app.domain.entities import (
     DispatchOffer,
     DispatchPosition,
     NewCrewRequirementLine,
+    Shift,
     Task,
     Trade,
     Worker,
@@ -24,13 +25,14 @@ from app.domain.entities import (
     WorkerSafetyQualification,
     WorkRequirement,
 )
-from app.domain.enums import AssessmentType, CapabilityProvenance, OfferStatus, PositionStatus
+from app.domain.enums import AssessmentType, CapabilityProvenance, OfferStatus, PositionStatus, ShiftStatus
 from app.domain.views import EligibleWorkerView, WorkerCapabilityView
 from app.infrastructure.db.models import (
     AssessmentModel,
     CrewRequirementModel,
     DispatchOfferModel,
     DispatchPositionModel,
+    ShiftModel,
     TaskModel,
     TradeModel,
     WorkerCapabilityModel,
@@ -138,6 +140,20 @@ def _dispatch_offer_to_entity(row: DispatchOfferModel) -> DispatchOffer:
         created_at=row.created_at,
         expires_at=row.expires_at,
         responded_at=row.responded_at,
+    )
+
+
+def _shift_to_entity(row: ShiftModel) -> Shift:
+    return Shift(
+        id=row.id,
+        dispatch_position_id=row.dispatch_position_id,
+        worker_id=row.worker_id,
+        scheduled_for=row.scheduled_for,
+        status=ShiftStatus(row.status),
+        check_in_at=row.check_in_at,
+        completed_at=row.completed_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 
@@ -689,3 +705,62 @@ class SqlAlchemyDispatchOfferRepository:
             .order_by(DispatchOfferModel.created_at)
         ).scalars()
         return [_dispatch_offer_to_entity(r) for r in rows]
+
+
+class SqlAlchemyShiftRepository:
+    """See SqlAlchemyDispatchPositionRepository's docstring for the
+    flush-vs-commit convention — mutating methods here `flush()`, not
+    `commit()`, so `ExecutionService` owns the transaction boundary
+    (needed for the idempotent-creation IntegrityError handling — see
+    app/services/execution_service.py)."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create(
+        self, *, dispatch_position_id: str, worker_id: str, scheduled_for: datetime | None
+    ) -> Shift:
+        row = ShiftModel(
+            dispatch_position_id=dispatch_position_id,
+            worker_id=worker_id,
+            scheduled_for=scheduled_for,
+            status=ShiftStatus.SCHEDULED.value,
+        )
+        self._db.add(row)
+        self._db.flush()
+        return _shift_to_entity(row)
+
+    def get_by_id(self, shift_id: str) -> Shift | None:
+        row = self._db.get(ShiftModel, shift_id)
+        return _shift_to_entity(row) if row else None
+
+    def get_by_dispatch_position_id(self, dispatch_position_id: str) -> Shift | None:
+        row = self._db.execute(
+            select(ShiftModel).where(ShiftModel.dispatch_position_id == dispatch_position_id)
+        ).scalar_one_or_none()
+        return _shift_to_entity(row) if row else None
+
+    def try_transition(
+        self,
+        shift_id: str,
+        *,
+        expected_status: ShiftStatus,
+        new_status: ShiftStatus,
+        check_in_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> bool:
+        """Same atomic-guard pattern as the dispatch position/offer
+        repositories: a single `UPDATE ... WHERE status = :expected`
+        statement — see docs/Dispatch.md "Two-layer transition safety"."""
+        values: dict[str, object] = {"status": new_status.value}
+        if check_in_at is not None:
+            values["check_in_at"] = check_in_at
+        if completed_at is not None:
+            values["completed_at"] = completed_at
+        result = self._db.execute(
+            update(ShiftModel)
+            .where(ShiftModel.id == shift_id, ShiftModel.status == expected_status.value)
+            .values(**values)
+        )
+        self._db.flush()
+        return result.rowcount == 1

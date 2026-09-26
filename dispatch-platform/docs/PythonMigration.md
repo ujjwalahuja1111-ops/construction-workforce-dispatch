@@ -3,11 +3,13 @@
 **Status:** Foundation patch landed, the worker capability self-declaration API (`POST`/`GET
 /api/worker/capabilities`) is ported on top of it, the first slice of the redesigned product loop —
 work requirements, crew requirements, and capability-based dispatch-candidate matching (`POST`/`GET
-/api/work-requirements`) — sits on top of both, and dispatch/offer/commitment (`POST
-/api/work-requirements/{id}/dispatch`, `POST`/`api/dispatch/offers/{id}/accept`|`decline`) now sits on
-top of that. See `docs/WorkRequirement.md` and `docs/Dispatch.md` for those two slices in full; this
-document stays focused on backend/TS-vs-Python migration status. This is still not a replacement for
-the TypeScript backend yet — see "What is authoritative" below.
+/api/work-requirements`) — sits on top of both, dispatch/offer/commitment (`POST
+/api/work-requirements/{id}/dispatch`, `POST`/`api/dispatch/offers/{id}/accept`|`decline`) sits on top
+of that, and a minimal shift/execution layer (`POST /api/dispatch-positions/{id}/execution`,
+`GET /api/executions/{id}`, `POST /api/executions/{id}/check-in`|`start`|`complete`) now sits on top of
+all three. See `docs/WorkRequirement.md`, `docs/Dispatch.md`, and `docs/Execution.md` for those slices
+in full; this document stays focused on backend/TS-vs-Python migration status. This is still not a
+replacement for the TypeScript backend yet — see "What is authoritative" below.
 
 ## Why
 
@@ -78,6 +80,15 @@ Column-for-column, from `backend/prisma/schema.prisma` and `backend/src/types/do
   semantics or breaking any of Patch 2's existing tests. Ends at COMMITTED — no `Shift`/execution
   integration yet, and still does not touch the legacy `Job`/`JobOffer`/`Shift`/`DispatchEngine`. Full
   writeup in `docs/Dispatch.md`.
+- **Shift / Execution** (`POST /api/dispatch-positions/{id}/execution`, `GET /api/executions/{id}`,
+  `POST /api/executions/{id}/check-in`|`start`|`complete`) — the third vertical slice: turns a COMMITTED
+  `DispatchPosition` into an actual, minimal work assignment (`Shift`) with an explicit `SCHEDULED ->
+  CHECKED_IN -> WORKING -> COMPLETED` state machine, idempotent creation backed by a database uniqueness
+  constraint (one execution per committed position), and worker-only check-in/start/complete on their own
+  execution. No GPS/geofencing/biometric evidence, no payroll, no ratings, no background scheduler —
+  attendance evidence is state and timestamps only. Does not touch `DispatchPosition`'s own status, the
+  legacy TypeScript `Job`/`JobOffer`/`Shift`/`ShiftEngine`, or any of Patch 2/3's existing tests. Full
+  writeup in `docs/Execution.md`.
 
 ## What has deliberately NOT been ported (yet)
 

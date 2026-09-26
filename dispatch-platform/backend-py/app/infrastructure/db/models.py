@@ -41,7 +41,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import OfferStatus, PositionStatus
+from app.domain.enums import OfferStatus, PositionStatus, ShiftStatus
 from app.infrastructure.db.base import Base
 
 
@@ -340,4 +340,51 @@ class DispatchOfferModel(Base):
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     position: Mapped[DispatchPositionModel] = relationship(back_populates="offers")
+    worker: Mapped[WorkerModel] = relationship()
+
+
+# -----------------------------------------------------------------------------
+# SHIFT / EXECUTION — the committed-position -> actual-work-assignment slice.
+# See docs/Execution.md for the model writeup. Deliberately a separate table
+# from the legacy TypeScript `Shift` model (backend/prisma/schema.prisma) —
+# same name because it fits this codebase's own domain language, not because
+# the two implementations share a schema; see that doc for why.
+# -----------------------------------------------------------------------------
+
+
+class ShiftModel(Base):
+    """Execution record for exactly one COMMITTED DispatchPosition. The
+    unique constraint on `dispatch_position_id` is the hard invariant "one
+    committed DispatchPosition may have at most one Shift/Execution" —
+    enforced at the database layer, not just by the service layer checking
+    before it creates one."""
+
+    __tablename__ = "shifts"
+    __table_args__ = (
+        UniqueConstraint("dispatch_position_id", name="uq_shift_dispatch_position"),
+        Index("ix_shift_worker_status", "worker_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    # Restrict, not Cascade — same convention as elsewhere in this file:
+    # deleting a DispatchPosition must not silently erase its execution
+    # history. In practice a COMMITTED position (the only status an
+    # execution can be created for) is never deleted directly.
+    dispatch_position_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dispatch_positions.id", ondelete="RESTRICT"), nullable=False
+    )
+    worker_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workers.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Snapshot of WorkRequirement.requested_for at creation time — see
+    # domain entity docstring for why this isn't re-derived via a join on
+    # every read.
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=ShiftStatus.SCHEDULED.value)
+    check_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    dispatch_position: Mapped[DispatchPositionModel] = relationship()
     worker: Mapped[WorkerModel] = relationship()

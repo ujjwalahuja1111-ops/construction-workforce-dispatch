@@ -15,6 +15,7 @@ from app.domain.entities import (
     DispatchOffer,
     DispatchPosition,
     NewCrewRequirementLine,
+    Shift,
     Task,
     Trade,
     Worker,
@@ -22,7 +23,7 @@ from app.domain.entities import (
     WorkerSafetyQualification,
     WorkRequirement,
 )
-from app.domain.enums import OfferStatus, PositionStatus
+from app.domain.enums import OfferStatus, PositionStatus, ShiftStatus
 from app.domain.views import EligibleWorkerView, WorkerCapabilityView
 
 
@@ -126,6 +127,23 @@ class DispatchOfferRepository(Protocol):
     def list_for_position(self, position_id: str) -> list[DispatchOffer]: ...
 
 
+class ShiftRepository(Protocol):
+    def create(
+        self, *, dispatch_position_id: str, worker_id: str, scheduled_for: datetime | None
+    ) -> Shift: ...
+    def get_by_id(self, shift_id: str) -> Shift | None: ...
+    def get_by_dispatch_position_id(self, dispatch_position_id: str) -> Shift | None: ...
+    def try_transition(
+        self,
+        shift_id: str,
+        *,
+        expected_status: ShiftStatus,
+        new_status: ShiftStatus,
+        check_in_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> bool: ...
+
+
 __all__ = [
     "TradeRepository",
     "TaskRepository",
@@ -136,4 +154,5 @@ __all__ = [
     "CrewRequirementRepository",
     "DispatchPositionRepository",
     "DispatchOfferRepository",
+    "ShiftRepository",
 ]

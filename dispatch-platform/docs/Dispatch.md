@@ -262,6 +262,11 @@ Unchanged from the existing plan: this patch ends at COMMITTED. `DispatchService
 boundary the next integration into Shift/Execution will sit behind — nothing about the legacy TypeScript
 `ShiftEngine`/`ShiftService` was touched or duplicated.
 
+**Update:** the next patch (see `docs/Execution.md`) builds exactly this on top of this slice, without
+changing anything described on this page. `DispatchPosition`'s own status and transitions, and the
+`dispatch_status` fulfilment signal, are unchanged; `docs/Execution.md` adds a new, separate `Shift`
+entity and state machine that only ever reads a COMMITTED position, never mutates it.
+
 ## Authorization
 
 - **Worker**: accept/decline only their own offer (`DispatchOffer.worker_id` resolved from the

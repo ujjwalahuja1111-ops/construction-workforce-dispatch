@@ -108,3 +108,22 @@ class OfferStatus(StrEnum):
     DECLINED = "DECLINED"
     EXPIRED = "EXPIRED"
     CANCELLED = "CANCELLED"
+
+
+class ShiftStatus(StrEnum):
+    """Shift/Execution lifecycle — the record that turns a COMMITTED
+    DispatchPosition into actual work (see docs/Execution.md). Kept to the
+    smallest linear chain the "COMMITTED POSITION -> MINIMAL SHIFT/
+    EXECUTION" patch asks for:
+
+        SCHEDULED -> CHECKED_IN -> WORKING -> COMPLETED
+
+    Deliberately no cancellation/abandonment/replacement/paused/disputed
+    states in this patch — those are future layers, same posture as
+    `OfferStatus`/`PositionStatus` being kept small on purpose. See
+    app/services/execution_state_machine.py for the transition table."""
+
+    SCHEDULED = "SCHEDULED"
+    CHECKED_IN = "CHECKED_IN"
+    WORKING = "WORKING"
+    COMPLETED = "COMPLETED"

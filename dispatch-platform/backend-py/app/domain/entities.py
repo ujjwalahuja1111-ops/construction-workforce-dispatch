@@ -18,7 +18,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.domain.enums import AssessmentType, CapabilityProvenance, OfferStatus, PositionStatus, Role
+from app.domain.enums import (
+    AssessmentType,
+    CapabilityProvenance,
+    OfferStatus,
+    PositionStatus,
+    Role,
+    ShiftStatus,
+)
 
 
 @dataclass(slots=True)
@@ -183,3 +190,26 @@ class DispatchOffer:
     created_at: datetime
     expires_at: datetime
     responded_at: datetime | None
+
+
+@dataclass(slots=True)
+class Shift:
+    """Execution record for exactly one COMMITTED DispatchPosition — "the
+    committed worker's actual work assignment" (see docs/Execution.md).
+    `work_requirement_id`/`crew_requirement_id` are deliberately NOT
+    duplicated here: both are derivable via `dispatch_position_id` ->
+    DispatchPosition, which already carries them, so there is nothing to
+    keep in sync on a second, redundant pair of foreign keys.
+    `scheduled_for` is a snapshot of the parent WorkRequirement's
+    `requested_for` taken at creation time — same "snapshot, not re-derived
+    on every read" convention as `CrewRequirement.safety_qualification_required`."""
+
+    id: str
+    dispatch_position_id: str
+    worker_id: str
+    scheduled_for: datetime | None
+    status: ShiftStatus
+    check_in_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
