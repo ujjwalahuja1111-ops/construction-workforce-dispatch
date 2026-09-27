@@ -558,6 +558,89 @@ def test_double_accept_same_offer_is_rejected(
     assert second.status_code == 409
 
 
+def test_worker_can_list_own_pending_offer(
+    client: TestClient, db_session: Session, test_settings: Settings
+) -> None:
+    """GET /api/dispatch/offers — the worker-owned offer-visibility
+    endpoint added for the product-test sprint (see docs/Dispatch.md)."""
+    tasks = seed_taxonomy(db_session)
+    task = tasks["BRICKWORK_NEW_WALL"]
+    _, contractor_headers = _contractor_auth(db_session, test_settings)
+
+    mason = create_worker(db_session, city="Bengaluru")
+    grant_capability(db_session, worker_id=mason.worker.id, task_id=task.id, level=3)
+
+    create_res = client.post(WORK_REQS, json=_mason_request(tasks), headers=contractor_headers)
+    wr = create_res.json()
+    summary = _dispatch(client, contractor_headers, wr["id"])
+    offer = summary["positions"][0]["offer"]
+
+    mason_headers = _worker_auth(mason, test_settings)
+    res = client.get(OFFERS, headers=mason_headers)
+    assert res.status_code == 200, res.text
+    offers = res.json()
+    assert len(offers) == 1
+    assert offers[0]["id"] == offer["id"]
+    assert offers[0]["status"] == "PENDING"
+    assert offers[0]["workRequirementId"] == wr["id"]
+    assert offers[0]["taskCode"] == "BRICKWORK_NEW_WALL"
+    assert offers[0]["minLevel"] == 3
+
+
+def test_worker_sees_only_own_offers_never_anothers(
+    client: TestClient, db_session: Session, test_settings: Settings
+) -> None:
+    tasks = seed_taxonomy(db_session)
+    task = tasks["BRICKWORK_NEW_WALL"]
+    _, contractor_headers = _contractor_auth(db_session, test_settings)
+
+    mason = create_worker(db_session, city="Bengaluru")
+    grant_capability(db_session, worker_id=mason.worker.id, task_id=task.id, level=3)
+    bystander = create_worker(db_session, city="Bengaluru")
+    grant_capability(db_session, worker_id=bystander.worker.id, task_id=task.id, level=3)
+
+    create_res = client.post(WORK_REQS, json=_mason_request(tasks), headers=contractor_headers)
+    wr = create_res.json()
+    _dispatch(client, contractor_headers, wr["id"])
+
+    # The bystander was never offered this position (mason won the
+    # deterministic ordering) and has no offers of their own.
+    bystander_headers = _worker_auth(bystander, test_settings)
+    res = client.get(OFFERS, headers=bystander_headers)
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_offer_list_reflects_accepted_status_after_acceptance(
+    client: TestClient, db_session: Session, test_settings: Settings
+) -> None:
+    tasks = seed_taxonomy(db_session)
+    task = tasks["BRICKWORK_NEW_WALL"]
+    _, contractor_headers = _contractor_auth(db_session, test_settings)
+
+    mason = create_worker(db_session, city="Bengaluru")
+    grant_capability(db_session, worker_id=mason.worker.id, task_id=task.id, level=3)
+
+    create_res = client.post(WORK_REQS, json=_mason_request(tasks), headers=contractor_headers)
+    wr = create_res.json()
+    summary = _dispatch(client, contractor_headers, wr["id"])
+    offer = summary["positions"][0]["offer"]
+
+    mason_headers = _worker_auth(mason, test_settings)
+    client.post(f"{OFFERS}/{offer['id']}/accept", headers=mason_headers)
+
+    res = client.get(OFFERS, headers=mason_headers)
+    assert res.json()[0]["status"] == "ACCEPTED"
+
+
+def test_list_offers_forbidden_without_worker_profile(
+    client: TestClient, db_session: Session, test_settings: Settings
+) -> None:
+    _, contractor_headers = _contractor_auth(db_session, test_settings)
+    res = client.get(OFFERS, headers=contractor_headers)
+    assert res.status_code == 403
+
+
 def test_decline_of_already_accepted_offer_is_rejected(
     client: TestClient, db_session: Session, test_settings: Settings
 ) -> None:

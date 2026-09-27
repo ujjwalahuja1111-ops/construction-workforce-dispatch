@@ -1,15 +1,17 @@
 """
-POST /api/dispatch/offers/{offer_id}/accept, POST .../decline — a worker
-resolving their own dispatch offer, and POST /api/dispatch/offers/expire —
-the internal/service endpoint that processes due expiries (no background
-scheduler exists on either backend today; see docs/Dispatch.md "Expiry").
+GET /api/dispatch/offers — a worker discovering their own offers (any
+status), POST /api/dispatch/offers/{offer_id}/accept, POST .../decline — a
+worker resolving their own dispatch offer, and
+POST /api/dispatch/offers/expire — the internal/service endpoint that
+processes due expiries (no background scheduler exists on either backend
+today; see docs/Dispatch.md "Expiry").
 
 Authorization mirrors the CTO order's rules exactly: a worker may only
-accept/decline THEIR OWN offer (enforced in DispatchService, not here, so
-the check can't be bypassed by calling the service directly) — never
-another worker's, and never a contractor shortcut around it. The expiry
-endpoint is ADMIN-only (an internal operational trigger, not something a
-contractor or worker calls directly).
+see/accept/decline THEIR OWN offers (enforced in DispatchService, not
+here, so the check can't be bypassed by calling the service directly) —
+never another worker's, and never a contractor shortcut around it. The
+expiry endpoint is ADMIN-only (an internal operational trigger, not
+something a contractor or worker calls directly).
 """
 
 from __future__ import annotations
@@ -23,7 +25,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_role
 from app.config import Settings, get_settings
 from app.domain.enums import Role
-from app.domain.views import CommittedAssignmentView, ExpireOffersResultView, OfferActionResultView
+from app.domain.views import (
+    CommittedAssignmentView,
+    ExpireOffersResultView,
+    MyDispatchOfferView,
+    OfferActionResultView,
+)
 from app.infrastructure.security.jwt import TokenPayload
 from app.services.dispatch_service import DispatchService
 
@@ -31,6 +38,59 @@ router = APIRouter(prefix="/dispatch/offers", tags=["dispatch-offers"])
 
 _require_worker = require_role(Role.WORKER)
 _require_admin = require_role(Role.ADMIN)
+
+
+class MyOfferOut(BaseModel):
+    """Deliberately thin, same posture as EligibleWorkerOut/DispatchOfferOut
+    — enough for a worker to understand and act on their own offer, never a
+    worker-browsing surface. See MyDispatchOfferView's docstring."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    status: str
+    created_at: str = Field(serialization_alias="createdAt")
+    expires_at: str = Field(serialization_alias="expiresAt")
+    responded_at: str | None = Field(serialization_alias="respondedAt")
+    position_id: str = Field(serialization_alias="positionId")
+    work_requirement_id: str = Field(serialization_alias="workRequirementId")
+    crew_requirement_id: str = Field(serialization_alias="crewRequirementId")
+    task_code: str = Field(serialization_alias="taskCode")
+    task_name: str = Field(serialization_alias="taskName")
+    min_level: int = Field(serialization_alias="minLevel")
+    city: str | None
+    state: str | None
+    requested_for: str | None = Field(serialization_alias="requestedFor")
+
+
+def _shape_my_offer(view: MyDispatchOfferView) -> MyOfferOut:
+    return MyOfferOut(
+        id=view.id,
+        status=view.status.value,
+        created_at=view.created_at.isoformat(),
+        expires_at=view.expires_at.isoformat(),
+        responded_at=view.responded_at.isoformat() if view.responded_at else None,
+        position_id=view.position_id,
+        work_requirement_id=view.work_requirement_id,
+        crew_requirement_id=view.crew_requirement_id,
+        task_code=view.task_code,
+        task_name=view.task_name,
+        min_level=view.min_level,
+        city=view.city,
+        state=view.state,
+        requested_for=view.requested_for.isoformat() if view.requested_for else None,
+    )
+
+
+@router.get("", response_model=list[MyOfferOut], response_model_by_alias=True)
+def list_my_offers(
+    token: TokenPayload = Depends(_require_worker),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[MyOfferOut]:
+    service = DispatchService(db, settings)
+    views = service.list_my_offers(requesting_user_id=token["sub"])
+    return [_shape_my_offer(v) for v in views]
 
 
 class CommittedAssignmentOut(BaseModel):

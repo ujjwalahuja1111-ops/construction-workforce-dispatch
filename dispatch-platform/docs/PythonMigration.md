@@ -7,9 +7,13 @@ work requirements, crew requirements, and capability-based dispatch-candidate ma
 /api/work-requirements/{id}/dispatch`, `POST`/`api/dispatch/offers/{id}/accept`|`decline`) sits on top
 of that, and a minimal shift/execution layer (`POST /api/dispatch-positions/{id}/execution`,
 `GET /api/executions/{id}`, `POST /api/executions/{id}/check-in`|`start`|`complete`) now sits on top of
-all three. See `docs/WorkRequirement.md`, `docs/Dispatch.md`, and `docs/Execution.md` for those slices
-in full; this document stays focused on backend/TS-vs-Python migration status. This is still not a
-replacement for the TypeScript backend yet — see "What is authoritative" below.
+all three, and the complete journey — contractor login through worker completing an execution — can now
+be run and verified end-to-end against `backend-py` alone (`GET /api/dispatch/offers` for worker offer
+discovery, `scripts/dev_seed.py` for deterministic dev tokens/data, `docs/ProductTestGuide.md` for the
+walkthrough and `tests/test_journey.py` for the automated version). See `docs/WorkRequirement.md`,
+`docs/Dispatch.md`, `docs/Execution.md`, and `docs/ProductTestGuide.md` for those slices in full; this
+document stays focused on backend/TS-vs-Python migration status. This is still not a replacement for the
+TypeScript backend yet — see "What is authoritative" below.
 
 ## Why
 
@@ -89,6 +93,12 @@ Column-for-column, from `backend/prisma/schema.prisma` and `backend/src/types/do
   attendance evidence is state and timestamps only. Does not touch `DispatchPosition`'s own status, the
   legacy TypeScript `Job`/`JobOffer`/`Shift`/`ShiftEngine`, or any of Patch 2/3's existing tests. Full
   writeup in `docs/Execution.md`.
+- **Worker offer discovery + dev/test seed** (`GET /api/dispatch/offers`; `scripts/dev_seed.py`) — not a
+  new product slice, but the minimum needed to actually exercise the four slices above end-to-end today: a
+  worker previously had `accept`/`decline` but no way to discover a pending offer's id, and `backend-py`
+  had no way to obtain a bearer token outside the test suite (auth issuance isn't ported yet — see
+  "Retirement plan" below). Neither adds a new domain contract or a second auth mechanism. Full writeup in
+  `docs/ProductTestGuide.md`.
 
 ## What has deliberately NOT been ported (yet)
 

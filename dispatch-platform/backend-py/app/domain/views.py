@@ -169,6 +169,33 @@ class ExpireOffersResultView:
 
 
 @dataclass(slots=True)
+class MyDispatchOfferView:
+    """One of the authenticated worker's own dispatch offers — enough
+    context to understand and act on the work without any worker-browsing
+    surface (see docs/Dispatch.md "What the candidate view exposes, and
+    what it doesn't" — this view follows the same posture). Backs
+    `GET /api/dispatch/offers`, the worker-owned offer-visibility endpoint:
+    a worker could always accept/decline an offer if they already knew its
+    id, but had no way to discover a pending offer's id in the first
+    place — this is the minimal read that closes that gap."""
+
+    id: str
+    status: OfferStatus
+    created_at: datetime
+    expires_at: datetime
+    responded_at: datetime | None
+    position_id: str
+    work_requirement_id: str
+    crew_requirement_id: str
+    task_code: str
+    task_name: str
+    min_level: int
+    city: str | None
+    state: str | None
+    requested_for: datetime | None
+
+
+@dataclass(slots=True)
 class ShiftView:
     """Read-shape for a Shift/Execution — carries the joined
     `work_requirement_id`/`crew_requirement_id` an API response needs

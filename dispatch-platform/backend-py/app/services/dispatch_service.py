@@ -51,6 +51,7 @@ from app.domain.views import (
     DispatchOfferView,
     DispatchSummaryView,
     ExpireOffersResultView,
+    MyDispatchOfferView,
     OfferActionResultView,
     PositionDispatchOutcomeView,
 )
@@ -407,6 +408,22 @@ class DispatchService:
             committed_at=now,
             work_requirement_dispatch_status=refreshed_wr,
         )
+
+    # ------------------------------------------------------------------
+    # GET /api/dispatch/offers — a worker's own offer visibility
+    # ------------------------------------------------------------------
+
+    def list_my_offers(self, *, requesting_user_id: str) -> list[MyDispatchOfferView]:
+        """Worker offer-discovery, closing the "worker has no way to find
+        their own pending offer id" gap — the accept/decline endpoints
+        already existed but required already knowing an offer id. Scoped
+        entirely by the resolved Worker row; never accepts a worker id from
+        the caller (no arbitrary worker-browsing surface — see
+        docs/Dispatch.md and MyDispatchOfferView's docstring)."""
+        worker = self._workers.get_by_user_id(requesting_user_id)
+        if worker is None:
+            raise AppError.forbidden("No worker profile for this account")
+        return self._offers.list_for_worker(worker.id)
 
     # ------------------------------------------------------------------
     # POST /api/dispatch/offers/{offer_id}/decline

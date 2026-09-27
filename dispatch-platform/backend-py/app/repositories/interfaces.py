@@ -24,7 +24,7 @@ from app.domain.entities import (
     WorkRequirement,
 )
 from app.domain.enums import OfferStatus, PositionStatus, ShiftStatus
-from app.domain.views import EligibleWorkerView, WorkerCapabilityView
+from app.domain.views import EligibleWorkerView, MyDispatchOfferView, WorkerCapabilityView
 
 
 class TradeRepository(Protocol):
@@ -125,6 +125,7 @@ class DispatchOfferRepository(Protocol):
     def list_expired_pending(self, *, now: datetime) -> list[DispatchOffer]: ...
     def count_pending_for_positions(self, position_ids: list[str]) -> int: ...
     def list_for_position(self, position_id: str) -> list[DispatchOffer]: ...
+    def list_for_worker(self, worker_id: str) -> list[MyDispatchOfferView]: ...
 
 
 class ShiftRepository(Protocol):

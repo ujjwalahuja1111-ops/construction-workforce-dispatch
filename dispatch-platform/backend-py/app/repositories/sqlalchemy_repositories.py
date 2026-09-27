@@ -26,7 +26,7 @@ from app.domain.entities import (
     WorkRequirement,
 )
 from app.domain.enums import AssessmentType, CapabilityProvenance, OfferStatus, PositionStatus, ShiftStatus
-from app.domain.views import EligibleWorkerView, WorkerCapabilityView
+from app.domain.views import EligibleWorkerView, MyDispatchOfferView, WorkerCapabilityView
 from app.infrastructure.db.models import (
     AssessmentModel,
     CrewRequirementModel,
@@ -705,6 +705,48 @@ class SqlAlchemyDispatchOfferRepository:
             .order_by(DispatchOfferModel.created_at)
         ).scalars()
         return [_dispatch_offer_to_entity(r) for r in rows]
+
+    def list_for_worker(self, worker_id: str) -> list[MyDispatchOfferView]:
+        """Backs `GET /api/dispatch/offers` — every offer (any status) ever
+        made to this worker, most recent first, joined against the position/
+        line/task/work-requirement it belongs to so the response is
+        self-contained. Scoped to `worker_id` in the WHERE clause, not
+        filtered after the fact — there is no code path here that could
+        return another worker's offer."""
+        rows = self._db.execute(
+            select(
+                DispatchOfferModel,
+                DispatchPositionModel,
+                CrewRequirementModel,
+                TaskModel,
+                WorkRequirementModel,
+            )
+            .join(DispatchPositionModel, DispatchOfferModel.position_id == DispatchPositionModel.id)
+            .join(CrewRequirementModel, DispatchPositionModel.crew_requirement_id == CrewRequirementModel.id)
+            .join(TaskModel, CrewRequirementModel.task_id == TaskModel.id)
+            .join(WorkRequirementModel, DispatchPositionModel.work_requirement_id == WorkRequirementModel.id)
+            .where(DispatchOfferModel.worker_id == worker_id)
+            .order_by(DispatchOfferModel.created_at.desc())
+        ).all()
+        return [
+            MyDispatchOfferView(
+                id=offer.id,
+                status=OfferStatus(offer.status),
+                created_at=offer.created_at,
+                expires_at=offer.expires_at,
+                responded_at=offer.responded_at,
+                position_id=position.id,
+                work_requirement_id=position.work_requirement_id,
+                crew_requirement_id=crew.id,
+                task_code=task.code,
+                task_name=task.name,
+                min_level=crew.min_level,
+                city=wr.city,
+                state=wr.state,
+                requested_for=wr.requested_for,
+            )
+            for offer, position, crew, task, wr in rows
+        ]
 
 
 class SqlAlchemyShiftRepository:
